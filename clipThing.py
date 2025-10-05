@@ -45,6 +45,7 @@ def init_db():
         creation_time REAL,
         size_bytes INTEGER,
         audio_tracks INTEGER,
+        duration REAL,
         edited_volumes TEXT,
         edited_start REAL,
         edited_stop REAL,
@@ -211,14 +212,17 @@ def worker_loop():
                 except Exception:
                     audio_tracks = None
 
+                duration = ffprobe_duration(filepath)
+
                 conn = sqlite3.connect(DB_PATH)
                 conn.execute("""
                 UPDATE clips SET
                     creation_time=?,
                     size_bytes=?,
-                    audio_tracks=?
+                    audio_tracks=?,
+                    duration=?
                 WHERE uuid=?
-                """, (creation_date, size_bytes, audio_tracks, uuid))
+                """, (creation_date, size_bytes, audio_tracks, duration, uuid))
                 conn.commit()
                 conn.close()
                 jobsQueue.task_done()
@@ -251,7 +255,7 @@ def worker_loop():
                 uuid = item.UUID
 
                 conn = sqlite3.connect(DB_PATH)
-                r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (uuid,)).fetchone()
+                r = conn.execute("SELECT filename, duration FROM clips WHERE uuid=?", (uuid,)).fetchone()
                 conn.close()
 
                 if not r:
@@ -261,10 +265,8 @@ def worker_loop():
                 filepath = os.path.join(CLIPS_ROOT, r[0])
                 thumb_path = os.path.join(DATA_THUMBS, f"{uuid}.jpg")
 
-                try:
-                    dur = ffprobe_duration(filepath) ## this could be faster if we skip getting the duration,
-                except Exception: ## maybe fetch it in metadata? but i feel like keeping duration in db is unnecesary
-                    dur = 2.0
+                dur = r[1] if r[1] is not None else 2.0 ## ok that was faster and easier than expected
+
                 t = max(0.0, dur / 2.0)
                 os.makedirs(os.path.dirname(thumb_path), exist_ok=True)
                 thumbnail_ffmpeg = f'ffmpeg -y -ss {t:.2f} -i {shlex.quote(filepath)} -update true -frames:v 1 -vf "scale=min(480\\,iw):-2" {shlex.quote(thumb_path)}'
@@ -368,7 +370,7 @@ def missingno():
     else:
         raise HTTPException(404)
     
-    
+
 # --- Startup ---
 init_db()
 init_scan()

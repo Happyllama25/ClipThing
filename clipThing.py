@@ -7,7 +7,6 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 
-IMPORTS = os.environ.get("IMPORTS", "./imports")  # Watch for new clips
 CLIPS_ROOT = os.environ.get("CLIPS", "./clips")   # Also watch but store here
 DATA_ROOT = os.path.join(CLIPS_ROOT, "data")
 WEB_ROOT = os.path.join(DATA_ROOT, "web")
@@ -18,7 +17,7 @@ DATA_THUMBS = os.path.join(DATA_ROOT, "thumbnails")
 DATA_PROXIES = os.path.join(DATA_ROOT, "proxies")
 DATA_EXPORTS = os.path.join(DATA_ROOT, "exports")
 
-for d in (IMPORTS, CLIPS_ROOT, WEB_ROOT, DATA_THUMBS, DATA_PROXIES, DATA_EXPORTS):
+for d in (CLIPS_ROOT, WEB_ROOT, DATA_THUMBS, DATA_PROXIES, DATA_EXPORTS):
     os.makedirs(d, exist_ok=True)
 
 # --- Job definitions ---
@@ -263,12 +262,12 @@ def worker_loop():
                 thumb_path = os.path.join(DATA_THUMBS, f"{uuid}.jpg")
 
                 try:
-                    dur = ffprobe_duration(filepath)
-                except Exception:
+                    dur = ffprobe_duration(filepath) ## this could be faster if we skip getting the duration,
+                except Exception: ## maybe fetch it in metadata? but i feel like keeping duration in db is unnecesary
                     dur = 2.0
                 t = max(0.0, dur / 2.0)
                 os.makedirs(os.path.dirname(thumb_path), exist_ok=True)
-                thumbnail_ffmpeg = f'ffmpeg -y -ss {t:.2f} -i {shlex.quote(filepath)} -frames:v 1 -vf "scale=min(480\\,iw):-2" {shlex.quote(thumb_path)}'
+                thumbnail_ffmpeg = f'ffmpeg -y -ss {t:.2f} -i {shlex.quote(filepath)} -update true -frames:v 1 -vf "scale=min(480\\,iw):-2" {shlex.quote(thumb_path)}'
 
                 subprocess.check_call(thumbnail_ffmpeg, shell=True)
 
@@ -361,6 +360,15 @@ def root():
     index = os.path.join(WEB_ROOT, "index.html")
     return FileResponse(index) if os.path.exists(index) else HTMLResponse("Missing index.html")
 
+@app.get("/missingno.jpg", response_class=HTMLResponse)
+def missingno():
+    missingno_path = os.path.join(WEB_ROOT, "missingno.jpg")
+    if os.path.exists(missingno_path):
+        return FileResponse(missingno_path, media_type="image/jpeg")
+    else:
+        raise HTTPException(404)
+    
+    
 # --- Startup ---
 init_db()
 init_scan()

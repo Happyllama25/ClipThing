@@ -45,7 +45,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS clips (
         uuid TEXT PRIMARY KEY,
         filename TEXT,
-        creation_time INTEGER,
+        creation_time REAL,
         size_bytes INTEGER,
         audio_tracks INTEGER,
         edited_volumes TEXT,

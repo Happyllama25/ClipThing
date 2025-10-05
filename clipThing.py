@@ -314,11 +314,21 @@ def clip_thumb(UUID: str):
     return FileResponse(thumb_path, media_type="image/jpeg")
 
 @app.get("/clips/{UUID}/play")
-def play_proxy(UUID: str):
-    proxy_path = os.path.join(DATA_PROXIES, f"{UUID}.mp4")
-    if not os.path.exists(proxy_path):
+def play(UUID: str):
+    # proxy_path = os.path.join(DATA_PROXIES, f"{UUID}.mp4")
+    conn = sqlite3.connect(DB_PATH)
+    r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
+    conn.close()
+
+    if not r:
         raise HTTPException(404)
-    return FileResponse(proxy_path, media_type="video/mp4")
+    filepath = os.path.join(CLIPS_ROOT, r[0])
+    if not os.path.exists(filepath):
+        raise HTTPException(404)
+    
+    if not os.path.exists(filepath):
+        raise HTTPException(404)
+    return FileResponse(filepath)
 
 class ExportValues(BaseModel):
     start: float

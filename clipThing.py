@@ -86,7 +86,7 @@ def init_scan():
 def db_list_all_clips() -> List[dict]:
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT uuid, creation_time, size_bytes, edited_title, filename FROM clips ORDER BY creation_time DESC").fetchall()
+    rows = conn.execute("SELECT uuid, creation_time, size_bytes, duration, edited_title, filename FROM clips ORDER BY creation_time DESC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -353,9 +353,11 @@ def serve_export_file(UUID: str):
     if not os.path.exists(path): raise HTTPException(404)
     return FileResponse(path, media_type="video/mp4")
 
-@app.get("/queue_status")
-def queue_status():
-    return {"queue_size": jobsQueue.qsize()}
+@app.get("/queueSize")
+def queueSize():
+    if not jobsQueue.qsize():
+        return {"queueSize": 0}
+    return {"queueSize": jobsQueue.qsize()}
 
 @app.get("/", response_class=HTMLResponse)
 def root():

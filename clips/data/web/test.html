@@ -1,0 +1,59 @@
+<html>
+<head>
+  <title>Test</title>
+</head>
+
+<body>
+  <header>
+    <h1>Test Header</h1>
+  </header>
+
+
+  <div id="modal" class="modal" role="dialog" aria-modal="true">
+    <div class="panel">
+      <header>
+        <div id="panelTitle" class="title">Clip</div>
+        <div class="spacer"></div>
+        <button id="closeBtn">Close</button>
+      </header>
+      <div class="body">
+        <video class="videoPlayer"id="player" controls></video>
+        <div class="row">
+          <div class="col">
+            <div class="title">Trim</div>
+            <div class="controls">
+              <label>Start (s): <input id="start" type="number" min="0" step="0.1" value="0"></label>
+              <button id="setStart">Use current</button>
+            </div>
+            <div class="controls">
+              <label>End (s): <input id="end" type="number" min="0" step="0.1" value="0"></label>
+              <button id="setEnd">Use current</button>
+            </div>
+            <div class="controls">
+              <label>Size limit (MB): <input id="sizeLimit" type="number" min="5" step="1" value="50"></label>
+              <label>Audio kbps: <input id="audioKbps" type="number" min="64" step="16" value="160"></label>
+              <label>Two-pass <input id="twoPass" type="checkbox" checked></label>
+            </div>
+          </div>
+          <div class="col">
+          <div class="title">Audio mix</div>
+            <div class="sliders">
+              <div><div class="muted">Track 1</div><input id="v0" type="range" min="0" max="2" step="0.05" value="1"></div>
+              <div><div class="muted">Track 2</div><input id="v1" type="range" min="0" max="2" step="0.05" value="1"></div>
+              <div><div class="muted">Track 3</div><input id="v2" type="range" min="0" max="2" step="0.05" value="1"></div>
+              <div><div class="muted">Track 4</div><input id="v3" type="range" min="0" max="2" step="0.05" value="1"></div>
+            </div>
+            <div class="controls">
+              <button id="exportBtn" class="primary">Export</button>
+              <div class="prog" style="flex:1"><div id="bar"></div></div>
+            </div>
+            <a id="downloadLink" href="#" style="display:none">Download</a>
+            <div id="jobMsg" class="muted"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  
+</html>

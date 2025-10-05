@@ -1,7 +1,10 @@
 /.venv
 /__pycache__
-/clips
-!clips/data/web/*
+clips/*
+!clips/data/
+clips/data/*
+!clips/data/web/
+!clips/data/web/**
 *.log
 *.mbtree
 .vscode/launch.json

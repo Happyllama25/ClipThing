@@ -79,14 +79,14 @@ def init_scan():
         conn.commit()
         conn.close()
         jobsQueue.put(PriorityItem(10, new_uuid))  # Metadata
-        jobsQueue.put(PriorityItem(20, new_uuid))  # Proxy
+        # jobsQueue.put(PriorityItem(20, new_uuid))  # Proxy
         jobsQueue.put(PriorityItem(30, new_uuid))  # Thumbnail
         print(f"🇬🇧 Discovered new clip: {f} as {new_uuid}")
 
 def db_list_all_clips() -> List[dict]:
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT uuid, creation_time, size_bytes, duration, edited_title, filename FROM clips ORDER BY creation_time DESC").fetchall()
+    rows = conn.execute("SELECT uuid, creation_time, size_bytes, duration, edited_title, filename, audio_tracks FROM clips ORDER BY creation_time DESC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -102,6 +102,18 @@ def compute_bitrates(size_limit_mb, duration, audio_kbps):
     audio_bps = max(64_000, int(audio_kbps * 1000))
     video_bps = int(max(100_000, total_bps - audio_bps))
     return video_bps, audio_bps
+
+def fmt_bitrate(bps: Optional[int]) -> str:
+    """Format bits-per-second into ffmpeg-friendly string like '500k' or '1M'.
+
+    Keeps it simple: round to kbps and append 'k', switch to 'M' when >= 1000k.
+    """
+    if not bps:
+        return "100k"
+    kb = max(1, int(round(bps / 1000)))
+    if kb >= 1000 and kb % 1000 == 0:
+        return f"{kb//1000}M"
+    return f"{kb}k"
 
 def ffprobe_trackcount(file_path: str) -> int:
     cmd = [
@@ -153,10 +165,17 @@ def worker_loop():
                 # Bitrates
                 duration = max(0.1, export_end - export_start)
                 export_video_bps, export_audio_bps = compute_bitrates(export_size_limit, duration, 160) ## hardcoded audio_kbps !!!
+                # format for ffmpeg args (strings like '500k')
+                export_video_bps_str = fmt_bitrate(export_video_bps)
+                export_audio_bps_str = fmt_bitrate(export_audio_bps)
 
                 #filter complex logic
                 filters = []
                 map_inputs = []
+                # ensure we have at least one volume level
+                if not export_volumes:
+                    export_volumes = [1.0]
+
                 for index, vol in enumerate(export_volumes):
                     filters.append(f"[0:a:{index}]volume={vol}[a{index}]")
                     map_inputs.append(f"[a{index}]")
@@ -165,29 +184,36 @@ def worker_loop():
                 #end of the horror
 
                 # Pass 1
-                pass1 = ["ffmpeg",
-                                "-y", "-ss", str(export_start),
-                                "-t", str(duration), "-i", input_file,
-                                "-an", #skip audio
-                                "-c:v", "libx264", "-preset", "medium", "-b:v", export_video_bps,
-                                "-pass", "1", "-f", "mp4", os.devnull
+                pass1 = [
+                    "ffmpeg",
+                    "-y", "-ss", str(export_start), "-t", str(duration),
+                    "-i", input_file,
+                    "-filter_complex", audio_filter,
+                    "-map", "0:v:0", "-map", "[mixed]",
+                    "-c:v", "libx264", "-preset", "medium", "-b:v", export_video_bps_str,
+                    "-c:a", "aac", "-b:a", export_audio_bps_str,
+                    "-pass", "1",
+                    "-f", "mp4", os.devnull,
                 ]
-                p = subprocess.Popen(pass1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                p.communicate()
-                
+                p1 = subprocess.Popen(pass1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                p1.communicate()
+                    # "-movflags", "+faststart",
+                print(f"{audio_filter}")
                 # Pass 2
-                pass2 = ["ffmpeg",
-                                "-y", "-ss", str(export_start), "-t", str(duration),
-                                "-i", input_file,
-                                "-filter_complex", audio_filter,
-                                "-map", "[mixed]",
-                                "-c:v", "libx264", "-preset", "medium", "-b:v", export_video_bps,
-                                "-c:a", "aac", "-b:a", export_audio_bps,
-                                "-movflags", "+faststart",
-                                "-pass", "2",  exported_file
+                pass2 = [
+                    "ffmpeg",
+                    "-y", "-ss", str(export_start), "-t", str(duration),
+                    "-i", input_file,
+                    "-filter_complex", audio_filter,
+                    "-map", "0:v:0", "-map", "[mixed]",
+                    "-c:v", "libx264", "-preset", "medium", "-b:v", export_video_bps_str,
+                    "-c:a", "aac", "-b:a", export_audio_bps_str,
+                    "-pass", "2", exported_file,
                 ]
-                p = subprocess.Popen(pass2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                p.communicate()
+                print(pass2)
+                    # "-movflags", "+faststart",
+                p2 = subprocess.Popen(pass2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                p2.communicate()
 
                 jobsQueue.task_done()
                 continue
@@ -301,7 +327,8 @@ def list_clips():
         "file": r["filename"],
         "size_bytes": r["size_bytes"],
         "edited_title": r["edited_title"],
-        "creation_time": r["creation_time"]
+        "creation_time": r["creation_time"],
+        "audio_tracks": r["audio_tracks"]
     } for r in rows]
 
 @app.get("/clips/{UUID}/thumb")
@@ -338,24 +365,29 @@ class ExportValues(BaseModel):
 
 @app.post("/clips/{UUID}/export")
 def enqueue_export(UUID: str, body: ExportValues, status_code=202):
-
-    exportedValues = json.dumps(asdict(body))
+    # body is a Pydantic model, not a dataclass. use .dict()
+    exportedValues = json.dumps(body.dict())
 
     conn = sqlite3.connect(DB_PATH)
-    r = conn.execute("""UPDATE clips SET
+    cur = conn.cursor()
+    cur.execute("""UPDATE clips SET
         exported_values=? 
     WHERE uuid=?
     """, (exportedValues, UUID))
+    conn.commit()
+    rowcount = cur.rowcount
     conn.close()
 
-    if not r: raise HTTPException(404)
+    if not rowcount:
+        # no rows updated -> clip not found
+        raise HTTPException(404, detail="clip not found")
 
     jobsQueue.put(PriorityItem(
-        1, UUID, body.start, body.end, 
+        1, UUID, body.start, body.end,
         body.volumes, body.size_limit_mb
-        ))
+    ))
 
-    return 
+    return {"status": "queued"}
 
 @app.get("/clips/{UUID}/exported_file")
 def serve_export_file(UUID: str):

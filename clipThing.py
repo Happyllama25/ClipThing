@@ -36,6 +36,7 @@ jobsQueue = queue.PriorityQueue()
 
 # --- Init DB ---
 def init_db():
+    """create DB and table if not present."""
     conn = sqlite3.connect(DB_PATH, timeout=30)
     cur = conn.cursor()
     cur.execute("""
@@ -57,6 +58,7 @@ def init_db():
     conn.close()
 
 def init_scan():
+    """Scan CLIPS_ROOT for new files, add critical UUID and filepath to DB and queue jobs."""
     existing_files = set()
     conn = sqlite3.connect(DB_PATH, timeout=30)
     cur = conn.cursor()
@@ -84,6 +86,7 @@ def init_scan():
         print(f"🇬🇧 Discovered new clip: {f} as {new_uuid}")
 
 def db_list_all_clips() -> List[dict]:
+    """fetch all clips from DB, ordered by creation_time desc (most recent first)"""
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     rows = conn.execute("SELECT uuid, creation_time, size_bytes, duration, edited_title, filename, audio_tracks FROM clips ORDER BY creation_time DESC").fetchall()
@@ -92,11 +95,13 @@ def db_list_all_clips() -> List[dict]:
 
 # --- Helpers ---
 def ffprobe_duration(path: str) -> float:
+    """ffprobe duration of a media file"""
     cmd = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {shlex.quote(path)}'
     out = subprocess.check_output(cmd, shell=True, text=True).strip()
     return float(out)
 
 def compute_bitrates(size_limit_mb, duration, audio_kbps):
+    """calc (calc is short for calculator) a bitrate audio/video pair within a size limit (MB)"""
     size_bytes = int(size_limit_mb * 1024 * 1024)
     total_bps = (size_bytes * 8) / max(0.1, duration)
     audio_bps = max(64_000, int(audio_kbps * 1000))
@@ -106,7 +111,7 @@ def compute_bitrates(size_limit_mb, duration, audio_kbps):
 def fmt_bitrate(bps: Optional[int]) -> str:
     """Format bits-per-second into ffmpeg-friendly string like '500k' or '1M'.
 
-    Keeps it simple: round to kbps and append 'k', switch to 'M' when >= 1000k.
+    round to kbps and append 'k', switch to 'M' when >= 1000k.
     """
     if not bps:
         return "100k"
@@ -116,6 +121,7 @@ def fmt_bitrate(bps: Optional[int]) -> str:
     return f"{kb}k"
 
 def ffprobe_trackcount(file_path: str) -> int:
+    """return how many audio tracks are in the file"""
     cmd = [
         "ffprobe", "-v", "error",
         "-select_streams", "a",
@@ -419,4 +425,4 @@ def missingno():
 init_db()
 init_scan()
 
-# print(jobsQueue.qsize())
+

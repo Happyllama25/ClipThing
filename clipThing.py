@@ -72,6 +72,12 @@ def init_scan():
             continue
         if not f.lower().endswith(('.mp4', '.mov', '.mkv', '.avi', '.wmv', '.flv')):
             continue
+        # try:
+        #     # Check if file is a valid video by attempting to probe it
+        #     subprocess.check_output(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_type', '-of', 'default=noprint_wrappers=1:nokey=1', os.path.join(CLIPS_ROOT, f)], stderr=subprocess.STDOUT)
+        # except subprocess.CalledProcessError:
+        #     # Not a valid video file
+
         new_uuid = str(uuid.uuid4())
         src_path = os.path.join(CLIPS_ROOT, f)
         conn = sqlite3.connect(DB_PATH, timeout=30)
@@ -81,7 +87,7 @@ def init_scan():
         conn.commit()
         conn.close()
         jobsQueue.put(PriorityItem(10, new_uuid))  # Metadata
-        # jobsQueue.put(PriorityItem(20, new_uuid))  # Proxy
+        # jobsQueue.put(PriorityItem(20, new_uuid))  # Proxy | TODO: copy data to fragmented mp4 container
         jobsQueue.put(PriorityItem(30, new_uuid))  # Thumbnail
         print(f"🇬🇧 Discovered new clip: {f} as {new_uuid}")
 

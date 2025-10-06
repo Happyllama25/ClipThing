@@ -318,7 +318,7 @@ def worker_loop():
         # finally:
         #     jobsQueue.task_done()
 
-threading.Thread(target=worker_loop, daemon=True).start()
+threading.Thread(target=worker_loop, name="worker", daemon=True).start()
 
 
 
@@ -372,8 +372,7 @@ class ExportValues(BaseModel):
 
 @app.post("/clips/{UUID}/export")
 def enqueue_export(UUID: str, body: ExportValues, status_code=202):
-    # body is a Pydantic model, not a dataclass. use .dict()
-    exportedValues = json.dumps(body.dict())
+    exportedValues = json.dumps(body.model_dump())
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()

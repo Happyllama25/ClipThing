@@ -1,6 +1,7 @@
 # ClipThing
 
 ### A cross-platform game clips tool for managing, trimming, and exporting game clips.
+### Zero accounts, Zero ads, Free, Forever
 
 #### Major features:
 - Multi audio channel support

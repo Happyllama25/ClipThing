@@ -392,6 +392,9 @@ async function openClip(item){
 
   const container = document.getElementById('volumesDiv');
 
+  // clear previous sliders
+  container.innerHTML = '';
+
   // Create the sliders dynamically
   volSlidersArray.forEach((value, index) => {
     const label = document.createElement('label');

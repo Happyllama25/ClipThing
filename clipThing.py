@@ -310,6 +310,7 @@ def worker_loop():
 
             case _:
                 print(f"Unknown priority {item.priority}")
+                Warning("Unknown priority in job queue")
                 jobsQueue.task_done()
                 continue
         # except Exception as e:
@@ -417,8 +418,8 @@ def missingno():
     missingno_path = os.path.join(WEB_ROOT, "missingno.jpg")
     if os.path.exists(missingno_path):
         return FileResponse(missingno_path, media_type="image/jpeg")
-    else:
-        raise HTTPException(404)
+
+    raise HTTPException(404)
     
 
 # --- Startup ---

@@ -8,3 +8,4 @@ clips/data/*
 *.log
 *.mbtree
 .vscode/launch.json
+clips/data/web/test.html

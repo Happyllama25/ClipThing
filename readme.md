@@ -21,9 +21,9 @@ You can optionally host the program on a remote server so as to not use your har
 To-Do / Roadmap:
 
 - Tagging of clips
-- Renaming persistence
+- ~~Renaming persistence~~
 - Proper exporting link
-- That one bug where the volume sliders dont get removed unless you refresh the page
+- ~~That one bug where the volume sliders dont get removed unless you refresh the page~~
 - Watchdog for new clips
 - Queue size metric
 - Timeline-esque bar with draggable handles

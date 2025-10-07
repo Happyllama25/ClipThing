@@ -344,6 +344,57 @@ def list_clips():
         "audio_tracks": r["audio_tracks"]
     } for r in rows]
 
+@app.get("/clips/{UUID}")
+def get_clip(UUID: str):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    r = conn.execute("SELECT edited_volumes, edited_start, edited_stop, exported_values FROM clips WHERE uuid=?", (UUID,)).fetchone()
+    conn.close()
+    if not r: raise HTTPException(404, detail="clip not found")
+    result = dict(r)
+    # decode edited_volumes if it's a string
+    if isinstance(result.get("edited_volumes"), str):
+        try:
+            result["edited_volumes"] = json.loads(result["edited_volumes"])
+        except Exception:
+            pass
+    return result
+
+
+class EditValues(BaseModel):
+    edited_start: Optional[float] = None
+    edited_stop: Optional[float] = None
+    edited_volumes: Optional[List[float]] = None
+    edited_title: Optional[str] = None
+
+@app.patch("/clips/{UUID}")
+def update_info(UUID: str, clip_data: EditValues):
+    allowed_fields = {"edited_volumes", "edited_start", "edited_stop", "edited_title"}
+
+    update_fields = {}
+    for key, value in clip_data.model_dump().items():
+        if key in allowed_fields and value is not None:
+            update_fields[key] = value
+
+
+    if not update_fields:
+        raise HTTPException(400, detail=f"currently allowed editable fields are: {', '.join(allowed_fields)}")
+
+    set_columns = ", ".join(f"{key}=?" for key in update_fields.keys())
+    values = list(update_fields.values()) + [UUID]
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(f"UPDATE clips SET {set_columns} WHERE uuid=?", values)
+    conn.commit()
+    rowcount = cur.rowcount
+    conn.close()
+
+    if not rowcount:
+        raise HTTPException(404, detail="no changes made, does that UUID exist? or was the data identical?")
+
+    return {"status": "updated"}
+
 @app.get("/clips/{UUID}/thumb")
 def clip_thumb(UUID: str):
     conn = sqlite3.connect(DB_PATH)
@@ -377,15 +428,18 @@ class ExportValues(BaseModel):
     size_limit_mb: float = 50.0
 
 @app.post("/clips/{UUID}/export")
-def enqueue_export(UUID: str, body: ExportValues, status_code=202):
-    exportedValues = json.dumps(body.model_dump())
+def enqueue_export(UUID: str, body: ExportValues):
+    """queue an export job and store the export parameters in the DB"""
+    exported_values = json.dumps(body.model_dump())
+
+    # the body should contain the keys "start", "end", "volumes" (dict), "size_limit_mb"
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("""UPDATE clips SET
         exported_values=? 
     WHERE uuid=?
-    """, (exportedValues, UUID))
+    """, (exported_values, UUID))
     conn.commit()
     rowcount = cur.rowcount
     conn.close()

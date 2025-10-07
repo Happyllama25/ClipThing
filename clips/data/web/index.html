@@ -230,12 +230,12 @@
               <label>Size limit (MB): <input id="sizeLimit" type="number" min="5" step="1" value="50"></label>
             </div>
           </div>
+          <button id="exportBtn" class="primary">
+            Export
+          </button>
           <div class="col" id="volumesDiv">
-            <div class="controls">
-              <button id="exportBtn" class="primary">
-                Export
-              </button>
-              <!-- <div class="prog" style="flex:1"><div id="progressBar"></div></div> -->
+            <!-- <div class="controls"> -->
+            <!-- <div class="prog" style="flex:1"><div id="progressBar"></div></div> -->
             </div>
 
           <a id="downloadLink" href="#" style="display:none">
@@ -270,7 +270,8 @@ let volumes = []; // store references to range inputs
 
 let current = null; // current clip item
 
-function fmtSec(s){ return (Math.round(s*10)/10).toFixed(1); }
+function fmtSec(second){
+  return (Math.round(second*10)/10).toFixed(1); }
 
 // human-friendly relative time formatter
 function timeAgo(ts){
@@ -430,8 +431,12 @@ async function openClip(item){
   // bar.style.width = '0%';
   player.src = `/clips/${item.uuid}/play`;
   player.load();
-  startTS.value = 0;
-  endTS.value = item.duration ? fmtSec(item.duration) : '0';
+
+  const clip = await fetchJSON(`/clips/${item.uuid}`, { method: 'GET' });
+
+  startTS.value = clip.edited_start || 0;
+  endTS.value = clip.edited_stop ? fmtSec(clip.edited_stop) : (clip.duration ? fmtSec(clip.duration) : '0');
+
 };
 
 function collectValues() {
@@ -446,11 +451,34 @@ function collectValues() {
       return newValues;
 }
 
-document.getElementById('setStart').onclick = ()=>{ startTS.value = fmtSec(player.currentTime || 0); };
-document.getElementById('setEnd').onclick = ()=>{
-  const d = player.duration || 0;
+document.getElementById('setStart').onclick = async ()=>{
+  startTS.value = fmtSec(player.currentTime || 0);
+
+  await fetchJSON(`/clips/${current.uuid}`,
+  {
+    method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify
+    ({
+      edited_start: startTS.value
+    })
+  });
+};
+
+document.getElementById('setEnd').onclick = async ()=>{
+  // const d = player.duration || 0;
   const t = player.currentTime || 0;
   endTS.value = fmtSec(Math.max(t, 0.1));
+
+  await fetchJSON(`/clips/${current.uuid}`,
+  {
+    method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify
+    ({
+      edited_stop: endTS.value
+    })
+  });
 };
 
 async function startExport(){
@@ -484,8 +512,19 @@ document.getElementById('exportBtn').onclick = ()=>{
 };
 document.getElementById('status').onclick = ()=> loadClips().catch(()=>{});
 
-editorTitle.addEventListener('input', ()=>{
+
+// editor title change
+editorTitle.addEventListener('input', async ()=>{
   console.log('title changed: ', editorTitle.textContent);
+  await fetchJSON(`/clips/${current.uuid}`,
+  {
+    method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify
+    ({
+      edited_title: editorTitle.textContent
+    })
+  });
 });
 
 

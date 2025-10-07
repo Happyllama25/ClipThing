@@ -1,5 +1,6 @@
 from __future__ import annotations
-import os, shlex, json, uuid, threading, queue, subprocess, sqlite3
+import sys
+import os, shlex, json, uuid, threading, queue, subprocess, sqlite3, uvicorn
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException
@@ -15,7 +16,7 @@ DB_PATH = os.path.join(DATA_ROOT, "ClipThing.db")
 # derived assets go into DATA_ROOT
 DATA_THUMBS = os.path.join(DATA_ROOT, "thumbnails")
 DATA_PROXIES = os.path.join(DATA_ROOT, "proxies")
-DATA_EXPORTS = os.path.join(DATA_ROOT, "exports")
+DATA_EXPORTS = os.path.join(CLIPS_ROOT, "exports")
 
 for d in (CLIPS_ROOT, WEB_ROOT, DATA_THUMBS, DATA_PROXIES, DATA_EXPORTS):
     os.makedirs(d, exist_ok=True)
@@ -467,6 +468,17 @@ def queueSize():
         return {"queueSize": 0}
     return {"queueSize": jobsQueue.qsize()}
 
+def resource_path(relative_path: str) -> str:
+    """ Get absolute path to resource, works for dev and PyInstaller """
+    try:
+        base_path = sys._MEIPASS  # pyright: ignore[reportAttributeAccessIssue] # Set by PyInstaller
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+WEB_ROOT = resource_path("clips/data/web")
+
 @app.get("/", response_class=HTMLResponse)
 def root():
     index = os.path.join(WEB_ROOT, "index.html")
@@ -486,3 +498,5 @@ init_db()
 init_scan()
 
 
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -9,3 +9,6 @@ clips/data/*
 *.mbtree
 .vscode/launch.json
 clips/data/web/test.html
+build/
+dist/
+*.spec

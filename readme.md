@@ -25,7 +25,7 @@ You can optionally host the program on a remote server/NAS so as to not use your
 
 ### Known (probably) issues:
 
-- if you export the same clip twice (or more) with  different settings, the download link will only download whichever clip has finished processing most recently
+- #13 if you export the same clip twice (or more) with  different settings, the download link will only download whichever clip has finished processing most recently
     - as in, the first export click will be downloaded, instead of the second export click, because the second click hasn't finished processing yet
         - (unless the title changes, if the title changes, ur good [i think])
 - if you delete the local file, the database wont know. https://github.com/users/Happyllama25/projects/2/views/1?pane=issue&itemId=133228518

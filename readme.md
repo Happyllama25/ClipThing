@@ -18,7 +18,7 @@ run `python clipthing.py` in a terminal, but run `pip install -r requirements.tx
 Runs on `http://localhost:8000`
 
 
-You can optionally host the program on a remote server/NAS so as to not use your hardware during a game session - add this somewhere
+You can optionally host the program on a remote server/NAS so as to not use your hardware during a game session <-- self note: add this selling point somewhere where it makes sense
 
 > [!WARNING]
 > This program is meant to be used in a local network - there is no remote authentication currently! Tailscale and alternative users should be fine if you know what you are doing

@@ -238,9 +238,9 @@
             <!-- <div class="prog" style="flex:1"><div id="progressBar"></div></div> -->
             </div>
 
-          <a id="downloadLink" href="#" style="display:none">
-            Download
-          </a>
+          <button href="#" class="primary" style="display:inline">
+            <a id="downloadLink" href="#">Download</a>
+          </button>
           <div id="jobMsg" class="muted">
           </div>
       </div>
@@ -257,7 +257,7 @@ const endTS = document.getElementById('end');
 const sizeLimitEl = document.getElementById('sizeLimit');
 // const progressBar = document.getElementById('progressBar');
 const jobMsg = document.getElementById('jobMsg');
-const dl = document.getElementById('downloadLink');
+const downloadButton = document.getElementById('downloadLink');
 
 
 // const volumesDiv = document.getElementById('volumesDiv');
@@ -332,7 +332,7 @@ for (const item of clips) {
   const img = document.createElement('img');
   img.className = 'thumb';
   img.alt = 'thumbnail';
-  img.src = '/missingno.jpg'; // lightweight placeholder
+  img.src = '/loading.jpg'; // lightweight placeholder
   img.dataset.uuid = item.uuid;
 
   const meta = document.createElement('div');
@@ -367,7 +367,7 @@ const observer = new IntersectionObserver((entries, observer) => {
           img.src = url;
         })
         .catch(() => {
-          img.src = '/missingno.jpg';
+          img.src = '/loading.jpg';
         });
 
       observer.unobserve(img); // Only load once
@@ -427,7 +427,7 @@ async function openClip(item){
 
   editor.classList.add('show');
   jobMsg.textContent = '';
-  dl.style.display = 'none';
+  downloadButton.style.display = 'none'; // hide download button
   // bar.style.width = '0%';
   player.src = `/clips/${item.uuid}/play`;
   player.load();
@@ -502,14 +502,55 @@ async function startExport(){
 
 
   const res = await fetchJSON(`/clips/${current.uuid}/export`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-  jobMsg.textContent = 'Encoding…';
-  dl.style.display = 'none';
+  jobMsg.textContent = 'Job Queued!';
+  downloadButton.style.display = 'inline';
 }
 
 
 document.getElementById('exportBtn').onclick = ()=>{ 
   startExport().catch(e=> alert(e.message||e)); 
 };
+
+downloadButton.onclick = async (e) => {
+  e.preventDefault();
+  console.log('download clicked');
+  console.log('current:', current);
+
+  if (!current) {
+    console.log('No current clip selected.');
+    return;
+  }
+
+  const url = `/clips/${current.uuid}/export`;
+
+  try {
+    const response = await fetch(url, { method: 'HEAD' }); // check if it exists
+    if (response.ok) {
+      // file exists, go download
+      const tempLink = document.createElement('a'); //make a temp link otherwise it loops the onClick
+      tempLink.href = url;
+      // we dont set the download bc the server names the file w the edited title
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      document.body.removeChild(tempLink);
+    } else {
+      console.warn('File not ready:', response.status);
+      downloadButton.textContent = 'not ready >:(';
+      setTimeout(() => {
+        downloadButton.textContent = 'Download';
+      }, 500);
+    }
+  } catch (err) {
+    console.error('Error checking file:', err);
+    downloadButton.textContent = 'Error :(\nCheck console';
+    setTimeout(() => {
+      downloadButton.textContent = 'Download';
+    }, 500);
+  }
+};
+
+
+
 document.getElementById('status').onclick = ()=> loadClips().catch(()=>{});
 
 
@@ -531,6 +572,7 @@ editorTitle.addEventListener('input', async ()=>{
 async function closeEditor(){
   editor.classList.remove('show');
   player.pause();
+  current = null;
 }
 
 document.getElementById('closeBtn').onclick = ()=>{

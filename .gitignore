@@ -7,7 +7,7 @@ clips/data/*
 !clips/data/web/**
 *.log
 *.mbtree
-.vscode/launch.json
+.vscode/
 clips/data/web/test.html
 build/
 dist/

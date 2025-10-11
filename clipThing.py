@@ -1,24 +1,33 @@
 from __future__ import annotations
-import sys
-import os, shlex, json, uuid, threading, queue, subprocess, sqlite3, uvicorn
-from dataclasses import dataclass, field, asdict
-from typing import Optional, List
-from fastapi import FastAPI, HTTPException
+from dataclasses import dataclass, field
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
+from sanitize_filename import sanitize
+from typing import Optional, List
+import json
+import os
+import queue
+import shlex
+import sqlite3
+import subprocess
+import sys
+import threading
+import uuid
+import uvicorn
 
 
-CLIPS_ROOT = os.environ.get("CLIPS", "./clips")   # Also watch but store here
+CLIPS_ROOT = os.environ.get("CLIPS", "./clips")
 DATA_ROOT = os.path.join(CLIPS_ROOT, "data")
-WEB_ROOT = os.path.join(DATA_ROOT, "web")
 DB_PATH = os.path.join(DATA_ROOT, "ClipThing.db")
 
 # derived assets go into DATA_ROOT
+#should we make a logs folder to contain ffmpeg logs? maybe futureproofing for multiple workers simultaneosly
 DATA_THUMBS = os.path.join(DATA_ROOT, "thumbnails")
-DATA_PROXIES = os.path.join(DATA_ROOT, "proxies")
+DATA_PROXIES = os.path.join(DATA_ROOT, "proxies") # remove?
 DATA_EXPORTS = os.path.join(CLIPS_ROOT, "exports")
 
-for d in (CLIPS_ROOT, WEB_ROOT, DATA_THUMBS, DATA_PROXIES, DATA_EXPORTS):
+for d in (CLIPS_ROOT, DATA_THUMBS, DATA_PROXIES, DATA_EXPORTS):
     os.makedirs(d, exist_ok=True)
 
 # --- Job definitions ---
@@ -52,7 +61,8 @@ def init_db():
         edited_start REAL,
         edited_stop REAL,
         edited_title TEXT,
-        exported_values TEXT
+        exported_values TEXT,
+        exported_filename TEXT
     ) WITHOUT ROWID;
     """)
     conn.commit()
@@ -88,7 +98,7 @@ def init_scan():
         conn.commit()
         conn.close()
         jobsQueue.put(PriorityItem(10, new_uuid))  # Metadata
-        # jobsQueue.put(PriorityItem(20, new_uuid))  # Proxy | TODO: copy data to fragmented mp4 container
+        # jobsQueue.put(PriorityItem(20, new_uuid))  # Proxy | TODO: copy data to fragmented mp4 container if its not
         jobsQueue.put(PriorityItem(30, new_uuid))  # Thumbnail
         print(f"🇬🇧 Discovered new clip: {f} as {new_uuid}")
 
@@ -107,27 +117,19 @@ def ffprobe_duration(path: str) -> float:
     out = subprocess.check_output(cmd, shell=True, text=True).strip()
     return float(out)
 
-def compute_bitrates(size_limit_mb, duration, audio_kbps):
-    """calc (calc is short for calculator) a bitrate audio/video pair within a size limit (MB)"""
-    size_bytes = int(size_limit_mb * 1024 * 1024)
-    total_bps = (size_bytes * 8) / max(0.1, duration)
-    audio_bps = max(64_000, int(audio_kbps * 1000))
-    video_bps = int(max(100_000, total_bps - audio_bps))
-    return video_bps, audio_bps
-
-def fmt_bitrate(bps: Optional[int]) -> str:
-    """Format bits-per-second into ffmpeg-friendly string like '500k' or '1M'.
-
-    round to kbps and append 'k', switch to 'M' when >= 1000k.
+def compute_bitrates(size_limit_mb, duration, audio_kbps) -> int:
+    """calc (calc is short for calculator) a bitrate audio/video pair within a size limit (MB)
+    
+    its the size limit in megabytes, converted into kilobits per second, without the inserted audio kilobits per second
     """
-    if not bps:
-        return "100k"
-    kb = max(1, int(round(bps / 1000)))
-    if kb >= 1000 and kb % 1000 == 0:
-        return f"{kb//1000}M"
-    return f"{kb}k"
+    size_kilobits = int(size_limit_mb * 8000)
+    total_v_kbps = size_kilobits / max(0.1, duration)
+    negated_video_kbps = int(total_v_kbps - audio_kbps)
 
-def ffprobe_trackcount(file_path: str) -> int:
+    return negated_video_kbps
+
+
+def ffprobe_trackcount(file_path: str) -> int: 
     """return how many audio tracks are in the file"""
     cmd = [
         "ffprobe", "-v", "error",
@@ -167,8 +169,11 @@ def worker_loop():
                     raise FileNotFoundError("clip not found")
                 input_file = os.path.join(CLIPS_ROOT, r[0])
                 
-                edited_title = r[1] if r[1] else export_uuid
-                exported_file = os.path.join(DATA_EXPORTS, f"{edited_title}.mp4")
+                ext = "mp4" # configurable? should it be saved in the db or just when the job is created?
+                edited_title = r[1] if r[1] else os.path.splitext(r[0])[0]
+                # name will be: edited title, or filename without extension
+                exported_file = os.path.join(DATA_EXPORTS, f"{sanitize(edited_title)}.{ext}")
+                in_progress_file = os.path.join(DATA_EXPORTS, f"{export_uuid}.{ext}.clipthing")
 
                 export_size_limit = item.export_limit_mb
                 export_volumes = item.volumes
@@ -177,10 +182,12 @@ def worker_loop():
 
                 # Bitrates
                 duration = max(0.1, export_end - export_start)
-                export_video_bps, export_audio_bps = compute_bitrates(export_size_limit, duration, 160) ## hardcoded audio_kbps !!!
+                audio_kbps = 160 # hardcoded for now, TODO: UI choice
+
+                export_video_kbps = compute_bitrates(export_size_limit, duration, audio_kbps)
                 # format for ffmpeg args (strings like '500k')
-                export_video_bps_str = fmt_bitrate(export_video_bps)
-                export_audio_bps_str = fmt_bitrate(export_audio_bps)
+                # export_video_bps_str = format_bitrate(export_video_bps)
+                # export_audio_bps_str = format_bitrate(export_audio_bps)
 
                 #filter complex logic
                 filters = []
@@ -203,13 +210,15 @@ def worker_loop():
                     "-i", input_file,
                     "-filter_complex", audio_filter,
                     "-map", "0:v:0", "-map", "[mixed]",
-                    "-c:v", "libx264", "-preset", "medium", "-b:v", export_video_bps_str,
-                    "-c:a", "aac", "-b:a", export_audio_bps_str,
+                    "-c:v", "libx264", "-preset", "medium", "-b:v", f"{export_video_kbps}k",
+                    "-c:a", "aac", "-b:a", f"{audio_kbps}k",
                     "-pass", "1",
                     "-f", "mp4", os.devnull,
                 ]
                 p1 = subprocess.Popen(pass1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                p1.communicate()
+                out, two = p1.communicate()
+                # print(out)
+
                     # "-movflags", "+faststart",
                 print(f"{audio_filter}")
                 # Pass 2
@@ -219,14 +228,27 @@ def worker_loop():
                     "-i", input_file,
                     "-filter_complex", audio_filter,
                     "-map", "0:v:0", "-map", "[mixed]",
-                    "-c:v", "libx264", "-preset", "medium", "-b:v", export_video_bps_str,
-                    "-c:a", "aac", "-b:a", export_audio_bps_str,
-                    "-pass", "2", exported_file,
+                    "-c:v", "libx264", "-preset", "medium", "-b:v", f"{export_video_kbps}k",
+                    "-c:a", "aac", "-b:a", f"{audio_kbps}k",
+                    "-pass", "2", 
+                    "-f", "mp4",
+                    in_progress_file,
                 ]
                 print(pass2)
                     # "-movflags", "+faststart",
                 p2 = subprocess.Popen(pass2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                p2.communicate()
+                out, two = p2.communicate()
+                # print(out)
+                os.rename(in_progress_file, exported_file)
+
+                # store the exported filename in the DB
+                conn = sqlite3.connect(DB_PATH)
+                conn.execute("""
+                            UPDATE clips SET exported_filename=? WHERE uuid=?""", 
+                            (os.path.basename(exported_file), export_uuid))
+                conn.commit()
+                conn.close()
+
 
                 jobsQueue.task_done()
                 continue
@@ -267,7 +289,7 @@ def worker_loop():
                 jobsQueue.task_done()
                 continue
 
-            case 20: # Proxy
+            case 20: # Proxy TODO remake this entire case to remux into fragmented mp4 for native browser playback
 
                 uuid = item.UUID
 
@@ -413,23 +435,22 @@ def play(UUID: str):
     conn.close()
 
     if not r:
-        raise HTTPException(404)
+        raise HTTPException(404, detail="No response from DB, does that clip exist?")
     filepath = os.path.join(CLIPS_ROOT, r[0])
     if not os.path.exists(filepath):
-        raise HTTPException(404)
+        raise HTTPException(404, detail="The item is tracked, but the file was not found on disk - has it been moved/renamed/deleted?")
     
-    if not os.path.exists(filepath):
-        raise HTTPException(404)
+
     return FileResponse(filepath)
 
-class ExportValues(BaseModel):
+class QueueExportValues(BaseModel):
     start: float
     end: float
     volumes: List[float]
-    size_limit_mb: float = 50.0
+    size_limit_mb: float = 50.0 # hardcoded to 50mb TODO 
 
 @app.post("/clips/{UUID}/export")
-def enqueue_export(UUID: str, body: ExportValues):
+def queue_export(UUID: str, body: QueueExportValues):
     """queue an export job and store the export parameters in the DB"""
     exported_values = json.dumps(body.model_dump())
 
@@ -456,16 +477,39 @@ def enqueue_export(UUID: str, body: ExportValues):
 
     return {"status": "queued"}
 
-@app.get("/clips/{UUID}/exported_file")
+@app.get("/clips/{UUID}/export")
 def serve_export_file(UUID: str):
-    path = os.path.join(DATA_EXPORTS, f"{UUID}.mp4")
-    if not os.path.exists(path): raise HTTPException(404)
-    return FileResponse(path, media_type="video/mp4")
 
-@app.get("/queueSize")
+    conn = sqlite3.connect(DB_PATH)
+    r = conn.execute("SELECT exported_filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
+    conn.close()
+
+    if not r or not r[0]:
+        raise HTTPException(404, detail="Prospective filename not found on database, has the export job been sent?")
+    export_file = os.path.join(DATA_EXPORTS, r[0])
+
+    if not os.path.exists(export_file):
+        raise HTTPException(404, detail="Exported file not found on disk, has the export job completed or was the export folder cleared?")
+    return FileResponse(export_file, filename=r[0])
+
+@app.head("/clips/{UUID}/export")
+def check_export_file(UUID: str):
+
+    conn = sqlite3.connect(DB_PATH)
+    r = conn.execute("SELECT exported_filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
+    conn.close()
+
+    if not r or not r[0]:
+        raise HTTPException(404, detail="Prospective filename not found on database, has the export job been sent?")
+    export_file = os.path.join(DATA_EXPORTS, r[0])
+
+    if not os.path.exists(export_file):
+        raise HTTPException(404, detail="Exported file not found on disk, has the export job completed or was the export folder cleared?")
+    return Response(status_code=200)
+
+
+@app.get("/queue")
 def queueSize():
-    if not jobsQueue.qsize():
-        return {"queueSize": 0}
     return {"queueSize": jobsQueue.qsize()}
 
 def resource_path(relative_path: str) -> str:
@@ -477,21 +521,24 @@ def resource_path(relative_path: str) -> str:
 
     return os.path.join(base_path, relative_path)
 
-WEB_ROOT = resource_path("clips/data/web")
+WEB_ROOT = resource_path("")
 
 @app.get("/", response_class=HTMLResponse)
 def root():
     index = os.path.join(WEB_ROOT, "index.html")
     return FileResponse(index) if os.path.exists(index) else HTMLResponse("Missing index.html")
 
-@app.get("/missingno.jpg", response_class=HTMLResponse)
-def missingno():
-    missingno_path = os.path.join(WEB_ROOT, "missingno.jpg")
-    if os.path.exists(missingno_path):
-        return FileResponse(missingno_path, media_type="image/jpeg")
+@app.get("/loading.jpg", response_class=HTMLResponse)
+def loading():
+    loading_path = os.path.join(WEB_ROOT, "loading.jpg")
+    if os.path.exists(loading_path):
+        return FileResponse(loading_path, media_type="image/jpeg")
 
     raise HTTPException(404)
     
+
+
+
 
 # --- Startup ---
 init_db()

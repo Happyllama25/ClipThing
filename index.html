@@ -529,7 +529,7 @@ downloadButton.onclick = async (e) => {
       // file exists, go download
       const tempLink = document.createElement('a'); //make a temp link otherwise it loops the onClick
       tempLink.href = url;
-      // we dont set the download bc the server names the file w the edited title
+      // we dont set the download name clientside bc the server already names the file w the edited title
       document.body.appendChild(tempLink);
       tempLink.click();
       document.body.removeChild(tempLink);

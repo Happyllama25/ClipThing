@@ -17,7 +17,7 @@ run `python clipthing.py` in a terminal, but run `pip install -r requirements.tx
 
 Runs on `http://localhost:8000`
 
-
+`CLIPS` environment variable is the root directory for scanning and storing clips - defaults to `~HOME/Videos/clips`
 You can optionally host the program on a remote server/NAS so as to not use your hardware during a game session <-- self note: add this selling point somewhere where it makes sense
 
 > [!WARNING]

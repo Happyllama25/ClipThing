@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
+import webbrowser
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
@@ -16,18 +17,18 @@ import threading
 import uuid
 import uvicorn
 
+HOME_DIR = os.path.expanduser("~")
+CLIPS_ROOT = os.environ.get("CLIPS", f"{HOME_DIR}/Videos/clips")
 
-CLIPS_ROOT = os.environ.get("CLIPS", "./clips")
 DATA_ROOT = os.path.join(CLIPS_ROOT, "data")
-DB_PATH = os.path.join(DATA_ROOT, "ClipThing.db")
-
-# derived assets go into DATA_ROOT
-#should we make a logs folder to contain ffmpeg logs? maybe futureproofing for multiple workers simultaneosly
-DATA_THUMBS = os.path.join(DATA_ROOT, "thumbnails")
-DATA_PROXIES = os.path.join(DATA_ROOT, "proxies") # remove?
 DATA_EXPORTS = os.path.join(CLIPS_ROOT, "exports")
 
-for d in (CLIPS_ROOT, DATA_THUMBS, DATA_PROXIES, DATA_EXPORTS):
+#should we make a logs folder to contain ffmpeg logs? maybe futureproofing for multiple workers simultaneosly
+DB_PATH = os.path.join(DATA_ROOT, "ClipThing.db")
+DATA_THUMBS = os.path.join(DATA_ROOT, "thumbnails")
+# DATA_PROXIES = os.path.join(DATA_ROOT, "proxies") # remove?
+
+for d in (CLIPS_ROOT, DATA_THUMBS, DATA_EXPORTS):
     os.makedirs(d, exist_ok=True)
 
 # --- Job definitions ---
@@ -546,4 +547,5 @@ init_scan()
 
 
 if __name__ == "__main__":
+    webbrowser.open("http://localhost:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)

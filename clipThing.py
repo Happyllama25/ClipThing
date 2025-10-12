@@ -289,7 +289,7 @@ def worker_loop():
                 jobsQueue.task_done()
                 continue
 
-            case 20: # Proxy TODO remake this entire case to remux into fragmented mp4 for native browser playback
+            # case 20: # Proxy TODO remake this entire case to remux into fragmented mp4 for native browser playback
 
                 uuid = item.UUID
 

@@ -210,6 +210,7 @@
   <div id="editor" class="editor" role="dialog" aria-modal="true">
     <div class="editorContent">
       <header>
+        <button id="deleteButton" class="closeBtn" title="Delete Clip" style="background:#ff4c4c;color:#fff;font-weight:bold">-</button>
         <div id="editorTitle" class="title" contenteditable="true">Clip</div>
         <div class="spacer"></div>
         <button class="closeBtn" id="closeBtn">X</button>
@@ -258,6 +259,7 @@ const sizeLimitEl = document.getElementById('sizeLimit');
 // const progressBar = document.getElementById('progressBar');
 const jobMsg = document.getElementById('jobMsg');
 const downloadButton = document.getElementById('downloadLink');
+const deleteButton = document.getElementById('deleteButton');
 
 
 // const volumesDiv = document.getElementById('volumesDiv');
@@ -480,6 +482,22 @@ document.getElementById('setEnd').onclick = async ()=>{
     })
   });
 };
+
+deleteButton.onclick = async () => {
+  if (!current) return;
+  const confirmed = confirm(`Are you sure you want to delete the clip "${current.edited_title || current.file}" from disk?`); // TODO optional file delete
+  if (!confirmed) return;
+
+  try {
+    await fetchJSON(`/clips/${current.uuid}`, { method: 'DELETE' });
+    closeEditor();
+    loadClips().catch(() => {});
+  } catch (error) {
+    alert('Failed to delete clip: ' + (error.message || error)); // TODO make it a notif, dont take up my whole screen
+    console.error('Error deleting clip:', error);
+  }
+};
+
 
 async function startExport(){
   if (!current) return;

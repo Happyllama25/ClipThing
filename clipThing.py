@@ -419,6 +419,30 @@ def update_info(UUID: str, clip_data: EditValues):
 
     return {"status": "updated"}
 
+@app.delete("/clips/{UUID}")
+def delete_clip(UUID: str):
+    conn = sqlite3.connect(DB_PATH)
+    r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
+    if not r:
+        conn.close()
+        raise HTTPException(404, detail="clip not found")
+    filename = r[0]
+    conn.execute("DELETE FROM clips WHERE uuid=?", (UUID,))
+    conn.commit()
+    conn.close()
+
+    # delete the actual file
+    file_path = os.path.join(CLIPS_ROOT, filename)
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+    thumb_path = os.path.join(DATA_THUMBS, f"{UUID}.jpg")
+    if os.path.exists(thumb_path):
+        os.remove(thumb_path)
+
+
+    return {"status": "deleted"}
+
 @app.get("/clips/{UUID}/thumb")
 def clip_thumb(UUID: str):
     conn = sqlite3.connect(DB_PATH)

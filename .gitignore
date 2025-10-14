@@ -11,4 +11,3 @@ clips/data/*
 clips/data/web/test.html
 build/
 dist/
-*.spec

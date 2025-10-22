@@ -103,7 +103,7 @@ def init_scan():
         jobsQueue.put(PriorityItem(10, new_uuid))  # Metadata
         # jobsQueue.put(PriorityItem(20, new_uuid))  # Proxy | TODO: copy data to fragmented mp4 container if its not
         jobsQueue.put(PriorityItem(30, new_uuid))  # Thumbnail
-        print(f"🇬🇧 Discovered new clip: {f} as {new_uuid}")
+        print(f"✨ Discovered new clip: {f} as {new_uuid}")
 
 def db_list_all_clips() -> List[dict]:
     """fetch all clips from DB, ordered by creation_time desc (most recent first)"""

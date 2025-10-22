@@ -6,8 +6,9 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-    ('index.html', '.'),
-    ('loading.jpg','.')
+    ('index.html',  '.'),
+    ('loading.jpg', '.'),
+    ('icon.png',    '.')
     ],
     hiddenimports=[],
     hookspath=[],

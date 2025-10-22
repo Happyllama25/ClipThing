@@ -4,8 +4,6 @@ import webbrowser
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
-# from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction
-# from PyQt5.QtGui import QIcon
 from sanitize_filename import sanitize
 from typing import Optional, List
 import json
@@ -44,8 +42,6 @@ class PriorityItem:
     volumes: Optional[List[float]] = field(compare=False, default=None)
     export_limit_mb: Optional[float] = field(compare=False, default=None)
 
-# --- queue ---
-jobsQueue = queue.PriorityQueue()
 
 # --- Init DB ---
 def init_db():
@@ -105,6 +101,52 @@ def init_scan():
         jobsQueue.put(PriorityItem(30, new_uuid))  # Thumbnail
         print(f"✨ Discovered new clip: {f} as {new_uuid}")
 
+def init_tray_icon():
+    from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction
+    from PyQt5.QtGui import QIcon
+    from PyQt5.QtCore import QTimer
+
+    def on_tray_activated(reason):
+            if reason == QSystemTrayIcon.Trigger:  # Left-click on most platforms
+                webbrowser.open("http://localhost:8000")
+
+
+    qt_app = QApplication(sys.argv)
+
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        print("⚠️ System tray not available. Skipping icon. Consider adding the '-nogui' launch argument.")
+
+    tray_icon = QSystemTrayIcon(QIcon(resource_path('icon.png')), qt_app)
+    tray_icon.setToolTip("ClipThing")
+
+    menu = QMenu()
+
+    queue_status_action = QAction("Queue: fetching...")
+    queue_status_action.setEnabled(False)
+    menu.addAction(queue_status_action)
+
+    menu.addSeparator()
+
+    exit_action = QAction("Exit")
+    exit_action.triggered.connect(qt_app.quit)
+    menu.addAction(exit_action)
+
+    tray_icon.setContextMenu(menu)
+    tray_icon.activated.connect(on_tray_activated)
+    tray_icon.show()
+
+
+    def update_queue_status():
+        job_count = jobsQueue.qsize()
+        queue_status_action.setText(f"Queue: {job_count} job{'s' if job_count != 1 else ''}")
+
+    timer = QTimer()
+    timer.timeout.connect(update_queue_status)
+    timer.start(2000)  # every 2 seconds
+
+
+    qt_app.exec_()
+
 def db_list_all_clips() -> List[dict]:
     """fetch all clips from DB, ordered by creation_time desc (most recent first)"""
     conn = sqlite3.connect(DB_PATH, timeout=30)
@@ -160,8 +202,16 @@ def worker_loop():
         item = jobsQueue.get()
         print(f"Worker got job: {item} with priority {item.priority}")
         match item.priority:
-
-            case 1:  # Export
+            case 1: # KILL KILL KILL 👹
+                jobsQueue.shutdown(immediate=True) #make nicer - drain the queue into DB, save for next startup
+                break
+            # case 2: # Pause
+            #     print("Pausing worker thread")
+            #     pause_event.clear()
+            #     jobsQueue.task_done()
+            #     continue
+            
+            case 5:  # Export
                 # spawn ffmpeg, needed vars are file (deduce from uuid), start, end, volumes, size limit
                 export_uuid = item.UUID
                 # use DB to locate source video
@@ -498,7 +548,7 @@ def queue_export(UUID: str, body: QueueExportValues):
         raise HTTPException(404, detail="clip not found")
 
     jobsQueue.put(PriorityItem(
-        1, UUID, body.start, body.end,
+        5, UUID, body.start, body.end,
         body.volumes, body.size_limit_mb
     ))
 
@@ -539,6 +589,12 @@ def check_export_file(UUID: str):
 def queueSize():
     return {"queueSize": jobsQueue.qsize()}
 
+@app.post("/exit")
+def queueSize():
+    jobsQueue.put(PriorityItem(1, "EXIT-EXIT-EXIT-EXIT"))
+    return {"queueSize": jobsQueue.qsize()}
+
+
 def resource_path(relative_path: str) -> str:
     """ Get absolute path to resource, works for dev and PyInstaller """
     try:
@@ -574,10 +630,18 @@ def loading():
 #     return FileResponse(index) if os.path.exists(index) else HTMLResponse("Missing selectize.bootstrap5.css")
 
 # --- Startup ---
+jobsQueue = queue.PriorityQueue()
 init_db()
-init_scan()
+init_scan() # should i put that down there? VV
 
 
 if __name__ == "__main__":
-    webbrowser.open("http://localhost:8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    if len(sys.argv) > 1:
+        for arg in sys.argv[1:]:
+            if arg == "-nogui":
+                print('⚠️   -nogui received, skipping tray icon...')
+                uvicorn.run(app, host="0.0.0.0", port=8000)
+    else:
+        threading.Thread(target=lambda: uvicorn.run(app, host="0.0.0.0", port=8000), daemon=True).start()
+        webbrowser.open("http://localhost:8000")
+        init_tray_icon()

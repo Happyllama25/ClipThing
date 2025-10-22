@@ -15,6 +15,8 @@ lorem ipsum i forgot
 
 run `python clipthing.py` in a terminal, but run `pip install -r requirements.txt` first.
 
+<!-- To skip the tray icon, launch with the `-nogui` argument -->
+
 Runs on `http://localhost:8000`
 
 `CLIPS` environment variable is the root directory for scanning and storing clips - defaults to `~HOME/Videos/clips`

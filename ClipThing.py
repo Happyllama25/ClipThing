@@ -4,6 +4,8 @@ import webbrowser
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
+# from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction
+# from PyQt5.QtGui import QIcon
 from sanitize_filename import sanitize
 from typing import Optional, List
 import json
@@ -561,9 +563,15 @@ def loading():
 
     raise HTTPException(404)
     
+# @app.get("/selectize.min.js", response_class=HTMLResponse)
+# def selectizeJS():
+#     index = os.path.join(WEB_ROOT, "selectize.min.js")
+#     return FileResponse(index) if os.path.exists(index) else HTMLResponse("Missing selectize.min.js")
 
-
-
+# @app.get("/selectize.bootstrap5.css", response_class=HTMLResponse)
+# def selectizeCSS():
+#     index = os.path.join(WEB_ROOT, "selectize.bootstrap5.css")
+#     return FileResponse(index) if os.path.exists(index) else HTMLResponse("Missing selectize.bootstrap5.css")
 
 # --- Startup ---
 init_db()

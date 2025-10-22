@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ClipThing</title>
+  <!-- <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <link rel="stylesheet" href="selectize.bootstrap5.css"/>
+  <script src="selectize.min.js"></script>  -->
   <style>
     /* :root { 
       --gap: 12px; 
@@ -234,6 +237,7 @@
           <button id="exportBtn" class="primary">
             Export
           </button>
+          <!-- <input type="text" id="input-tags" value="awesome,nested,beast" /> -->
           <div class="col" id="volumesDiv">
             <!-- <div class="controls"> -->
             <!-- <div class="prog" style="flex:1"><div id="progressBar"></div></div> -->
@@ -389,6 +393,28 @@ async function openClip(item){
   editorTitle.textContent = item.edited_title || item.file;
 
   
+  // editor.classList.add('show');
+
+  // // Initialize Selectize (cleanly reinitialize if needed)
+  // const $tagInput = $('#input-tags');
+
+  // if ($tagInput[0].selectize) {
+  //   $tagInput[0].selectize.destroy(); // prevent double init
+  // }
+
+  // $tagInput.selectize({
+  //   delimiter: ",",
+  //   persist: false,
+  //   create: function (input) {
+  //     return {
+  //       value: input,
+  //       text: input,
+  //     };
+  //   }
+  // });
+
+
+
   // audio junk --------------  
   const audio_tracks = item.audio_tracks;
   volSlidersArray = Array.from({length: audio_tracks}, (_, i) => 1.0);

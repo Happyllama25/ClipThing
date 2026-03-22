@@ -63,6 +63,11 @@
       border: 1px solid #1e242f; 
       cursor: pointer; 
     }
+
+    .card.flagged {
+    border: 2px solid red;
+    }
+
     .thumb { 
       display: block;
       width: 100%;
@@ -99,6 +104,15 @@
       background: var(--accent);
       color:#001428;
       border:0;
+    }
+    .settings {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,.55);
+      padding: 24px;
     }
     .editor { 
       position: fixed;
@@ -195,6 +209,58 @@
       color: var(--muted);
       font-size: 12px;
     }
+    .media-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .audio-controls {
+      display: grid;
+      gap: 10px;
+    }
+    .audio-track-control {
+      display: grid;
+      grid-template-columns: 30px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      background: var(--cardbg);
+      border-radius: 8px;
+    }
+    .audio-track-control input[type="range"] {
+      width: 100%;
+    }
+    .audio-track-control .track-number {
+      text-align: center;
+      font-weight: bold;
+    }
+    .audio-track-control .volume-value {
+      min-width: 3em;
+      text-align: right;
+    }
+    /* Notifications (SSE) */
+    #notifications {
+      position: fixed;
+      right: 12px;
+      top: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 9999;
+      max-width: 320px;
+    }
+    .notif {
+      background: #0f1720;
+      border: 1px solid #22303a;
+      padding: 10px 12px;
+      border-radius: 10px;
+      color: #dfe8ee;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .notif a { color: #a6d8ff; text-decoration: underline; }
   </style>
 </head>
 
@@ -202,11 +268,19 @@
   <header>
     <h1>ClipThing</h1>
     <div class="spacer"></div>
-    <div id="status">
-      <button id="status">Status/Refresh</button>
+    <div id="statusContainer">
+      <button id="statusBtn">Status/Refresh</button>
+    </div>
+    <div id="settingsContainer">
+      <button id="settingsBtn">Settings</button>
     </div>
   </header>
   <main>
+    <div style="display:flex; justify-content:flex-end; margin-bottom:10px;">
+      <button id="confirmDeleteBtn" style="display:none; background:#ff4c4c; color:#fff; font-weight:bold; border:none; padding:8px 12px; border-radius:8px; cursor:pointer;">
+        Confirm Delete
+      </button>
+    </div>
     <div id="grid" class="grid"></div>
   </main>
 
@@ -219,38 +293,71 @@
         <button class="closeBtn" id="closeBtn">X</button>
       </header>
       <div class="body">
-        <video class="videoPlayer"id="player" controls></video>
-          <div class="col">
-            <div class="title">Trim</div>
-            <div class="controls">
-              <label>Start (s): <input id="start" type="number" min="0" step="0.1" value="0"></label>
-              <button id="setStart">Use current</button>
-            </div>
-            <div class="controls">
-              <label>End (s): <input id="end" type="number" min="0" step="0.1" value="0"></label>
-              <button id="setEnd">Use current</button>
-            </div>
-            <div class="controls">
-              <label>Size limit (MB): <input id="sizeLimit" type="number" min="5" step="1" value="50"></label>
-            </div>
+        <div>
+          <button><</button> <button>></button>
+        </div>
+        <div class="media-container">
+          <video class="videoPlayer" id="player" controls autoplay muted></video>
+          <div id="audioTracks"></div>
+        </div>
+        <div class="col">
+          <div class="title">Trim</div>
+          <div class="controls">
+            <label>Start (s): <input id="start" type="number" min="0" step="0.1" value="0"></label>
+            <button id="setStart">Use current</button>
           </div>
-          <button id="exportBtn" class="primary">
-            Export
-          </button>
-          <!-- <input type="text" id="input-tags" value="awesome,nested,beast" /> -->
-          <div class="col" id="volumesDiv">
-            <!-- <div class="controls"> -->
-            <!-- <div class="prog" style="flex:1"><div id="progressBar"></div></div> -->
-            </div>
+          <div class="controls">
+            <label>End (s): <input id="end" type="number" min="0" step="0.1" value="0"></label>
+            <button id="setEnd">Use current</button>
+          </div>
+          <div class="controls">
+            <label>Size limit (MB): <input id="sizeLimit" type="number" min="5" step="1" value="50"></label>
+          </div>
+        </div>
+        <div class="col">
+          <div class="title">Audio Tracks</div>
+          <div id="volumesDiv" class="audio-controls">
+          </div>
+        </div>
+        <button id="exportBtn" class="primary">
+          Export
+        </button>
 
-          <button href="#" class="primary" style="display:inline">
-            <a id="downloadLink" href="#">Download</a>
-          </button>
-          <div id="jobMsg" class="muted">
-          </div>
+        <button href="#" class="primary" style="display:inline">
+          <a id="downloadLink" href="#">Download</a>
+        </button>
+        <div id="jobMsg" class="muted">
+        </div>
       </div>
     </div>
   </div>
+
+  <div id="settingsModal" class="settings" role="dialog" aria-modal="true">
+    <div class="settingsContent editorContent">
+      <header>
+        <div id="modalTitle" class="title">Settings</div>
+        <div class="spacer"></div>
+        <button class="closeBtn" id="closeSettingsBtn">X</button>
+      </header>
+      <div class="body">
+        <div class="settings-group">
+          <h3>Audio Settings</h3>
+          <div class="settings-row">
+            <label>
+              <input type="checkbox" id="muteTrack0Setting">
+              Always mute first audio track (Track 1)
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <h3>Maintenance</h3>
+          <button id="resetMetadataBtn" class="settings-btn">Reset and Requeue All Items</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 
 <script>
 const grid = document.getElementById('grid');
@@ -260,6 +367,26 @@ const editorTitle = document.getElementById('editorTitle');
 const startTS = document.getElementById('start');
 const endTS = document.getElementById('end');
 const sizeLimitEl = document.getElementById('sizeLimit');
+
+// Handle video/audio synchronization
+player.addEventListener('play', () => {
+  document.querySelectorAll('#audioTracks audio').forEach(audio => {
+    audio.currentTime = player.currentTime;
+    audio.play();
+  });
+});
+
+player.addEventListener('pause', () => {
+  document.querySelectorAll('#audioTracks audio').forEach(audio => {
+    audio.pause();
+  });
+});
+
+player.addEventListener('seeking', () => {
+  document.querySelectorAll('#audioTracks audio').forEach(audio => {
+    audio.currentTime = player.currentTime;
+  });
+});
 // const progressBar = document.getElementById('progressBar');
 const jobMsg = document.getElementById('jobMsg');
 const downloadButton = document.getElementById('downloadLink');
@@ -388,68 +515,87 @@ function observeImage(img) {
   observer.observe(img);
 }
 
-async function openClip(item){
+async function openClip(item) {
   current = item;
   editorTitle.textContent = item.edited_title || item.file;
 
+  // Clear any existing audio elements
+  const audioTracks = document.getElementById('audioTracks');
+  audioTracks.innerHTML = '';
   
-  // editor.classList.add('show');
-
-  // // Initialize Selectize (cleanly reinitialize if needed)
-  // const $tagInput = $('#input-tags');
-
-  // if ($tagInput[0].selectize) {
-  //   $tagInput[0].selectize.destroy(); // prevent double init
-  // }
-
-  // $tagInput.selectize({
-  //   delimiter: ",",
-  //   persist: false,
-  //   create: function (input) {
-  //     return {
-  //       value: input,
-  //       text: input,
-  //     };
-  //   }
-  // });
-
-
-
-  // audio junk --------------  
-  const audio_tracks = item.audio_tracks;
-  volSlidersArray = Array.from({length: audio_tracks}, (_, i) => 1.0);
-
+  // Setup volume controls
   const container = document.getElementById('volumesDiv');
-
-  // clear previous sliders
   container.innerHTML = '';
 
-  // Create the sliders dynamically
-  volSlidersArray.forEach((value, index) => {
-    const label = document.createElement('label');
-    // label.textContent = `Slider ${index + 1}: `;
+  // Create volume controls and audio elements for each track
+  const audio_tracks = item.audio_tracks || 0;
+  volSlidersArray = Array.from({length: audio_tracks}, (_, i) => 1.0);
 
+  for (let i = 0; i < audio_tracks; i++) {
+    // Create audio element for this track
+    const audio = document.createElement('audio');
+    audio.id = `audio-track-${i}`;
+    audio.src = `/clips/${item.uuid}/audio/${i}`; // You'll need to add this endpoint
+    audio.preload = 'auto';
+    audioTracks.appendChild(audio);
+
+    // Create control container
+    const controlDiv = document.createElement('div');
+    controlDiv.className = 'audio-track-control';
+    
+    // Track number
+    const trackNum = document.createElement('div');
+    trackNum.className = 'track-number';
+    trackNum.textContent = i + 1;
+    
+    // Volume slider
     const range = document.createElement('input');
     range.type = 'range';
     range.min = 0;
     range.max = 1.5;
     range.step = 0.05;
-    range.value = value;
-    range.id = `range-${index}`; // Unique ID
+    range.value = shouldMuteTrack(i) ? 0 : 1.0;
+    range.id = `range-${i}`;
+    
+    // If this is track 0 and it should be muted, initialize audio volume to 0
+    if (shouldMuteTrack(i)) {
+      audio.volume = 0;
+    }
 
-    const output = document.createElement('span');
-    output.textContent = value;
+    // Volume value display
+    const output = document.createElement('div');
+    output.className = 'volume-value';
+    output.textContent = '1.0';
 
+    // Handle volume changes with boost support
     range.addEventListener('input', () => {
-      output.textContent = range.value;
+      const value = parseFloat(range.value);
+      output.textContent = value.toFixed(2);
+      // For HTML5 Audio, we need to handle volume boost manually since volume is capped at 1
+      // if (value <= 1) {
+      //   audio.volume = value;
+      //   audio.preservesPitch = true; // Prevent pitch changes
+      // } else {
+      audio.volume = 1;
+      // Use Web Audio API for boosting beyond 100%
+      if (!audio.audioContext) {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioContext.createMediaElementSource(audio);
+        const gainNode = audioContext.createGain();
+        source.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        audio.audioContext = audioContext;
+        audio.gainNode = gainNode;
+      }
+      audio.gainNode.gain.value = value;
+      // }
     });
 
-    container.appendChild(label);
-    container.appendChild(range);
-    container.appendChild(output);
-    container.appendChild(document.createElement('br'));
-  });
-  // audio junk --------------
+    controlDiv.appendChild(trackNum);
+    controlDiv.appendChild(range);
+    controlDiv.appendChild(output);
+    container.appendChild(controlDiv);
+  }
 
 
 
@@ -595,7 +741,7 @@ downloadButton.onclick = async (e) => {
 
 
 
-document.getElementById('status').onclick = ()=> loadClips().catch(()=>{});
+document.getElementById('statusBtn').onclick = ()=> loadClips().catch(()=>{});
 
 
 // editor title change
@@ -630,11 +776,199 @@ window.onclick = function(event) {
 };
 
 
+// Settings Management
+const settingsModal = document.getElementById('settingsModal');
+const settingsBtn = document.getElementById('settingsBtn');
+const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+const muteTrack0Setting = document.getElementById('muteTrack0Setting');
+const resetMetadataBtn = document.getElementById('resetMetadataBtn');
+
+// Load settings from localStorage
+const loadSettings = () => {
+  muteTrack0Setting.checked = localStorage.getItem('muteTrack0') === 'true';
+};
+
+// Save settings to localStorage
+muteTrack0Setting.addEventListener('change', () => {
+  localStorage.setItem('muteTrack0', muteTrack0Setting.checked);
+});
+
+// Settings modal controls
+settingsBtn.addEventListener('click', () => {
+  settingsModal.classList.add('show');
+  loadSettings();
+});
+
+closeSettingsBtn.addEventListener('click', () => {
+  settingsModal.classList.remove('show');
+});
+
+// Reset metadata button
+resetMetadataBtn.addEventListener('click', async () => {
+  if (confirm('This will reset and requeue all items. Continue?')) {
+    try {
+      await fetchJSON('/reset', { method: 'POST' });
+      alert('Reset successful. Items have been requeued.');
+      loadClips();
+    } catch (error) {
+      alert('Error resetting items: ' + error.message);
+    }
+  }
+});
+
+// Apply muted track setting when creating audio controls
+const shouldMuteTrack = (trackIndex) => {
+  return trackIndex === 0 && localStorage.getItem('muteTrack0') === 'true';
+};
+
 // init
 loadClips().catch(err=>{ grid.innerHTML = '<div class="muted">Failed to load clips</div>'; console.error(err); });
 
+// ===============================
+// Global State
+// ===============================
+let allClips = []; // store loaded clips for navigation
+
+// ===============================
+// Load Clips + Flag Support
+// ===============================
+async function loadClips() {
+  grid.innerHTML = '';
+  const clips = await fetchJSON('/clips');
+  allClips = clips; // store for navigation
+
+  for (const item of clips) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    // if (flaggedForDeletion.has(item.uuid)) card.classList.add('flagged');
+
+    const img = document.createElement('img');
+    img.className = 'thumb';
+    img.alt = 'thumbnail';
+    img.src = '/loading.jpg';
+    img.dataset.uuid = item.uuid;
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.innerHTML = `
+      <div class="title">${item.edited_title || item.file}</div>
+      <div class="sub">
+        <h4>${item.size_bytes != null ? formatSize(item.size_bytes) : '??'}</h4>
+        <h4>${timeAgo(item.creation_time)}</h4>
+      </div>
+    `;
+
+    card.appendChild(img);
+    card.appendChild(meta);
+
+    // Left click = open editor
+    card.addEventListener('click', () => openClip(item));
+
+    // Right click = flag/unflag
+    card.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      toggleFlag(item);
+    });
+
+    grid.appendChild(card);
+    observeImage(img);
+  }
+
+  // updateConfirmDeleteVisibility();
+}
+
+// ===============================
+// Clip Navigation (Q / E)
+// ===============================
+function goToClip(direction) {
+  if (!current || allClips.length === 0) return;
+  const idx = allClips.findIndex(c => c.uuid === current.uuid);
+  if (idx === -1) return;
+  const newIdx = (idx + direction + allClips.length) % allClips.length;
+  openClip(allClips[newIdx]);
+}
+
+// ===============================
+// Keyboard Shortcuts
+// ===============================
+// document.addEventListener('keydown', (e) => {
+//   const tag = document.activeElement.tagName.toLowerCase();
+//   const isTyping = (tag === 'input' || tag === 'textarea' || document.activeElement.isContentEditable);
+
+//   if (e.key === 'q') {
+//     goToClip(-1);
+//   } else if (e.key === 'e') {
+//     goToClip(1);
+//   }
+// });
 
     
+</script>
+<!-- Notifications container -->
+<div id="notifications" aria-live="polite"></div>
+
+<script>
+// Server-Sent Events listener for export notifications
+(() => {
+  if (!window.EventSource) return; // SSE unsupported
+
+  const es = new EventSource('/events');
+  const notifications = document.getElementById('notifications');
+
+  function createNotification(uuid, filename) {
+    const el = document.createElement('div');
+    el.className = 'notif';
+
+    const msg = document.createElement('div');
+    msg.textContent = filename + ' is ready';
+
+    const link = document.createElement('a');
+    link.href = `/clips/${uuid}/export`;
+    link.textContent = 'Download';
+    link.setAttribute('role', 'button');
+    link.style.marginLeft = 'auto';
+
+    el.appendChild(msg);
+    el.appendChild(link);
+
+    // remove after 3 minutes or on click
+    const timeout = setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 3 * 60 * 1000);
+    link.addEventListener('click', () => { clearTimeout(timeout); if (el.parentNode) el.parentNode.removeChild(el); });
+
+    notifications.appendChild(el);
+  }
+
+  es.addEventListener('export', (ev) => {
+    try {
+      const data = JSON.parse(ev.data);
+      const uuid = data.uuid;
+      const filename = data.filename || 'export.mp4';
+
+      // If editor currently showing this clip, reveal the download button too
+      try {
+        if (window.current && window.current.uuid === uuid) {
+          const downloadBtn = document.getElementById('downloadLink');
+          if (downloadBtn) {
+            downloadBtn.parentElement.style.display = 'inline';
+            downloadBtn.href = `/clips/${uuid}/export`;
+            const jobMsg = document.getElementById('jobMsg');
+            if (jobMsg) jobMsg.textContent = 'Export ready!';
+          }
+        }
+      } catch (_) {}
+
+      // Always create a small toast notification
+      createNotification(uuid, filename);
+    } catch (err) {
+      console.error('Invalid SSE export event', err, ev.data);
+    }
+  });
+
+  // optional: handle connection errors
+  es.onerror = (e) => {
+    // console.warn('EventSource error', e);
+  };
+})();
 </script>
 </body>
 </html>

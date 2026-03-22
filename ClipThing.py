@@ -441,12 +441,12 @@ class EditValues(BaseModel):
     edited_start: Optional[float] = None
     edited_stop: Optional[float] = None
     edited_volumes: Optional[List[float]] = None
+    edited_audio_labels: Optional[List[str]] = None
     edited_title: Optional[str] = None
 
 @app.patch("/clips/{UUID}")
 def update_info(UUID: str, clip_data: EditValues):
-    allowed_fields = {"edited_volumes", "edited_start", "edited_stop", "edited_title"}
-
+    allowed_fields = {"edited_volumes", "edited_start", "edited_stop", "edited_title", "edited_audio_labels"}
     update_fields = {}
     for key, value in clip_data.model_dump().items():
         if key in allowed_fields and value is not None:
@@ -497,11 +497,15 @@ def delete_clip(UUID: str):
 
 @app.get("/clips/{UUID}/thumb")
 def clip_thumb(UUID: str):
-    conn = sqlite3.connect(DB_PATH)
-    r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
-    conn.close()
-    if not r: raise HTTPException(404)
+    # conn = sqlite3.connect(DB_PATH) #why was all of this here? to verify if the UUID existed?
+    # r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
+    # conn.close()
+    # if not r: raise HTTPException(404)
     thumb_path = os.path.join(DATA_THUMBS, f"{UUID}.jpg")
+    
+    if not os.path.exists(thumb_path):
+        jobsQueue.put(PriorityItem(30, UUID))
+        raise HTTPException(status_code=404, detail="Thumbnail not found but one has been queued")
     return FileResponse(thumb_path, media_type="image/jpeg")
 
 @app.get("/clips/{UUID}/play")

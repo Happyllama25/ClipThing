@@ -1,12 +1,7 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
-import webbrowser
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel
-from sanitize_filename import sanitize
-from typing import Optional, List
+
 import json
+import logging
 import os
 import queue
 import shlex
@@ -15,7 +10,17 @@ import subprocess
 import sys
 import threading
 import uuid
+import webbrowser
+from dataclasses import dataclass, field
+from typing import List, Optional
+
 import uvicorn
+from fastapi import FastAPI, HTTPException, Response
+from fastapi.responses import FileResponse, HTMLResponse
+from pydantic import BaseModel
+from sanitize_filename import sanitize
+from watchdog.events import FileCreatedEvent, FileSystemEventHandler
+from watchdog.observers import Observer
 
 HOME_DIR = os.path.expanduser("~")
 CLIPS_ROOT = os.environ.get("CLIPS", f"{HOME_DIR}/Videos/clips")
@@ -23,7 +28,7 @@ CLIPS_ROOT = os.environ.get("CLIPS", f"{HOME_DIR}/Videos/clips")
 DATA_ROOT = os.path.join(CLIPS_ROOT, "data")
 DATA_EXPORTS = os.path.join(CLIPS_ROOT, "exports")
 
-#should we make a logs folder to contain ffmpeg logs? maybe futureproofing for multiple workers simultaneosly
+# should we make a logs folder to contain ffmpeg logs? maybe futureproofing for multiple workers simultaneosly
 DB_PATH = os.path.join(DATA_ROOT, "ClipThing.db")
 DATA_THUMBS = os.path.join(DATA_ROOT, "thumbnails")
 # DATA_PROXIES = os.path.join(DATA_ROOT, "proxies") # remove?
@@ -31,7 +36,15 @@ DATA_THUMBS = os.path.join(DATA_ROOT, "thumbnails")
 for d in (CLIPS_ROOT, DATA_THUMBS, DATA_EXPORTS):
     os.makedirs(d, exist_ok=True)
 
+# --- Logging ---
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("ClipThing")
+log.info("Logging Started!")
+
 # --- Job definitions ---
+jobsQueue = queue.PriorityQueue()
+
+
 @dataclass(order=True)
 class PriorityItem:
     priority: int
@@ -46,11 +59,15 @@ class PriorityItem:
 # --- Init DB ---
 def init_db():
     """create DB and table if not present."""
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_db()
+    conn.execute("PRAGMA journal_mode=WAL;")
     cur = conn.cursor()
     cur.execute("""
     CREATE TABLE IF NOT EXISTS clips (
         uuid TEXT PRIMARY KEY,
+        process_status TEXT,
+        user_status TEXT,
+        publicity BOOLEAN,
         filename TEXT,
         creation_time REAL,
         size_bytes INTEGER,
@@ -67,20 +84,29 @@ def init_db():
     conn.commit()
     conn.close()
 
+
+def get_db():
+    """get a new DB connection, with the right timeout and journal mode for concurrency"""
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    return conn
+
+
 def init_scan():
     """Scan CLIPS_ROOT for new files, add critical UUID and filepath to DB and queue jobs."""
     existing_files = set()
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = get_db()
     cur = conn.cursor()
     rows = cur.execute("SELECT filename FROM clips").fetchall()
     for r in rows:
         existing_files.add(r[0])
     conn.close()
 
-    for f in os.listdir(CLIPS_ROOT):
-        if f in existing_files:
+    for file in os.listdir(CLIPS_ROOT):
+        if file in existing_files:
             continue
-        if not f.lower().endswith(('.mp4', '.mov', '.mkv', '.avi', '.wmv', '.flv')):
+        if not file.lower().endswith((".mp4", ".mov", ".mkv", ".avi", ".wmv", ".flv")):
             continue
         # try:
         #     # Check if file is a valid video by attempting to probe it
@@ -88,35 +114,27 @@ def init_scan():
         # except subprocess.CalledProcessError:
         #     # Not a valid video file
 
-        new_uuid = str(uuid.uuid4())
-        src_path = os.path.join(CLIPS_ROOT, f)
-        conn = sqlite3.connect(DB_PATH, timeout=30)
-        conn.execute("""
-        INSERT INTO clips (uuid, filename) VALUES (?, ?)
-        """, (new_uuid, os.path.basename(src_path)))
-        conn.commit()
-        conn.close()
-        jobsQueue.put(PriorityItem(10, new_uuid))  # Metadata
-        # jobsQueue.put(PriorityItem(20, new_uuid))  # Proxy | TODO: copy data to fragmented mp4 container if its not
-        jobsQueue.put(PriorityItem(30, new_uuid))  # Thumbnail
-        print(f"✨ Discovered new clip: {f} as {new_uuid}")
+        src_path = os.path.join(CLIPS_ROOT, file)
+        ingest_new_clip(src_path)
+
 
 def init_tray_icon():
-    from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction
-    from PyQt5.QtGui import QIcon
     from PyQt5.QtCore import QTimer
+    from PyQt5.QtGui import QIcon
+    from PyQt5.QtWidgets import QAction, QApplication, QMenu, QSystemTrayIcon
 
     def on_tray_activated(reason):
-            if reason == QSystemTrayIcon.Trigger:  # Left-click on most platforms
-                webbrowser.open("http://localhost:8000")
-
+        if reason == QSystemTrayIcon.Trigger:  # Left-click on most platforms
+            webbrowser.open("http://localhost:8000")
 
     qt_app = QApplication(sys.argv)
 
     if not QSystemTrayIcon.isSystemTrayAvailable():
-        print("⚠️ System tray not available. Skipping icon. Consider adding the '-nogui' launch argument.")
+        log.warning(
+            "⚠️ System tray not available. Skipping icon. Consider adding the '-nogui' launch argument."
+        )
 
-    tray_icon = QSystemTrayIcon(QIcon(resource_path('icon.png')), qt_app)
+    tray_icon = QSystemTrayIcon(QIcon(resource_path("icon.png")), qt_app)
     tray_icon.setToolTip("ClipThing")
 
     menu = QMenu()
@@ -135,36 +153,40 @@ def init_tray_icon():
     tray_icon.activated.connect(on_tray_activated)
     tray_icon.show()
 
-
     def update_queue_status():
         job_count = jobsQueue.qsize()
-        queue_status_action.setText(f"Queue: {job_count} job{'s' if job_count != 1 else ''}")
+        queue_status_action.setText(
+            f"Queue: {job_count} job{'s' if job_count != 1 else ''}"
+        )
 
     timer = QTimer()
     timer.timeout.connect(update_queue_status)
     timer.start(2000)  # every 2 seconds
 
-
     qt_app.exec_()
+
 
 def db_list_all_clips() -> List[dict]:
     """fetch all clips from DB, ordered by creation_time desc (most recent first)"""
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT uuid, creation_time, size_bytes, duration, edited_title, filename, audio_tracks FROM clips ORDER BY creation_time DESC").fetchall()
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT uuid, creation_time, size_bytes, duration, edited_title, filename, audio_tracks FROM clips ORDER BY creation_time DESC"
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
 
 # --- Helpers ---
 def ffprobe_duration(path: str) -> float:
     """ffprobe duration of a media file"""
-    cmd = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {shlex.quote(path)}'
+    cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {shlex.quote(path)}"
     out = subprocess.check_output(cmd, shell=True, text=True).strip()
     return float(out)
 
+
 def compute_bitrates(size_limit_mb, duration, audio_kbps) -> int:
     """calc (calc is short for calculator) a bitrate audio/video pair within a size limit (MB)
-    
+
     its the size limit in megabytes, converted into kilobits per second, without the inserted audio kilobits per second
     """
     size_kilobits = int(size_limit_mb * 8000)
@@ -174,259 +196,408 @@ def compute_bitrates(size_limit_mb, duration, audio_kbps) -> int:
     return negated_video_kbps
 
 
-def ffprobe_trackcount(file_path: str) -> int: 
+def ffprobe_trackcount(file_path: str) -> int:
     """return how many audio tracks are in the file"""
     cmd = [
-        "ffprobe", "-v", "error",
-        "-select_streams", "a",
-        "-show_entries", "stream=index",
-        "-of", "json",
-        file_path
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=index",
+        "-of",
+        "json",
+        file_path,
     ]
-    
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    
+
+    result = subprocess.run(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+
     if result.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {result.stderr}")
-    
+
     data = json.loads(result.stdout)
     indexes = [stream["index"] for stream in data.get("streams", [])]
     return len(indexes)
 
+
 def worker_loop():
-    jobsQueue.join()
-    print("Worker thread started")
+    # jobsQueue.join()
+    log.info("Worker thread started")
     while True:
-        print("Worker waiting for job...")
-        # try:
+        log.info("Worker waiting for job...")
         item = jobsQueue.get()
-        print(f"Worker got job: {item} with priority {item.priority}")
-        match item.priority:
-            case 1: # KILL KILL KILL 👹
-                jobsQueue.shutdown(immediate=True) #make nicer - drain the queue into DB, save for next startup
-                break
-            # case 2: # Pause
-            #     print("Pausing worker thread")
-            #     pause_event.clear()
-            #     jobsQueue.task_done()
-            #     continue
-            
-            case 5:  # Export
-                # spawn ffmpeg, needed vars are file (deduce from uuid), start, end, volumes, size limit
-                export_uuid = item.UUID
-                # use DB to locate source video
-                conn = sqlite3.connect(DB_PATH)
-                r = conn.execute("SELECT filename, edited_title FROM clips WHERE uuid=?", (export_uuid,)).fetchone()
-                conn.close()
-                if not r:
-                    raise FileNotFoundError("clip not found")
-                input_file = os.path.join(CLIPS_ROOT, r[0])
-                
-                ext = "mp4" # configurable? should it be saved in the db or just when the job is created?
-                edited_title = r[1] if r[1] else os.path.splitext(r[0])[0]
-                # name will be: edited title, or filename without extension
-                exported_file = os.path.join(DATA_EXPORTS, f"{sanitize(edited_title)}.{ext}")
-                in_progress_file = os.path.join(DATA_EXPORTS, f"{export_uuid}.{ext}.clipthing")
+        log.info(f"Worker got job: {item} with priority {item.priority}")
+        try:
+            match item.priority:
+                case 1:  # KILL KILL KILL 👹
+                    jobsQueue.shutdown(
+                        immediate=True
+                    )  # make nicer - drain the queue into DB, save for next startup
+                    break
+                # case 2: # Pause
+                #     log.info("Pausing worker thread")
+                #     pause_event.clear()
+                #     continue
 
-                export_size_limit = item.export_limit_mb
-                export_volumes = item.volumes
-                export_start = item.start
-                export_end = item.end
+                case 5:  # Export
+                    # spawn ffmpeg, needed vars are file (deduce from uuid), start, end, volumes, size limit
+                    export_uuid = item.UUID
+                    # use DB to locate source video
+                    conn = get_db()
+                    r = conn.execute(
+                        "SELECT filename, edited_title FROM clips WHERE uuid=?",
+                        (export_uuid,),
+                    ).fetchone()
+                    conn.close()
+                    if not r:
+                        raise FileNotFoundError("clip not found")
+                    input_file = os.path.join(CLIPS_ROOT, r[0])
 
-                # Bitrates
-                duration = max(0.1, export_end - export_start)
-                audio_kbps = 160 # hardcoded for now, TODO: UI choice
+                    ext = "mp4"  # configurable? should it be saved in the db or just when the job is created?
+                    edited_title = r[1] if r[1] else os.path.splitext(r[0])[0]
+                    # name will be: edited title, or filename without extension
+                    exported_file = os.path.join(
+                        DATA_EXPORTS, f"{sanitize(edited_title)}.{ext}"
+                    )
+                    in_progress_file = os.path.join(
+                        DATA_EXPORTS, f"{export_uuid}.{ext}.clipthing"
+                    )
 
-                export_video_kbps = compute_bitrates(export_size_limit, duration, audio_kbps)
-                # format for ffmpeg args (strings like '500k')
-                # export_video_bps_str = format_bitrate(export_video_bps)
-                # export_audio_bps_str = format_bitrate(export_audio_bps)
+                    export_size_limit = item.export_limit_mb
+                    export_volumes = item.volumes
+                    export_start = item.start
+                    export_end = item.end
 
-                #filter complex logic
-                filters = []
-                map_inputs = []
-                # ensure we have at least one volume level
-                if not export_volumes:
-                    export_volumes = [1.0]
+                    # Bitrates
+                    duration = max(0.1, export_end - export_start)
+                    audio_kbps = 160  # hardcoded for now, TODO: UI choice
 
-                for index, vol in enumerate(export_volumes):
-                    filters.append(f"[0:a:{index}]volume={vol}[a{index}]")
-                    map_inputs.append(f"[a{index}]")
-                amix = "".join(map_inputs) + f"amix=inputs={len(export_volumes)}:duration=longest[mixed]"
-                audio_filter = "; ".join(filters + [amix])
-                #end of the horror
+                    export_video_kbps = compute_bitrates(
+                        export_size_limit, duration, audio_kbps
+                    )
+                    # format for ffmpeg args (strings like '500k')
+                    # export_video_bps_str = format_bitrate(export_video_bps)
+                    # export_audio_bps_str = format_bitrate(export_audio_bps)
 
-                # Pass 1
-                pass1 = [
-                    "ffmpeg",
-                    "-y", "-ss", str(export_start), "-t", str(duration),
-                    "-i", input_file,
-                    "-filter_complex", audio_filter,
-                    "-map", "0:v:0", "-map", "[mixed]",
-                    "-c:v", "libx264", "-preset", "medium", "-b:v", f"{export_video_kbps}k",
-                    "-c:a", "aac", "-b:a", f"{audio_kbps}k",
-                    "-pass", "1",
-                    "-f", "mp4", os.devnull,
-                ]
-                p1 = subprocess.Popen(pass1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                out, two = p1.communicate()
-                # print(out)
+                    # filter complex logic
+                    filters = []
+                    map_inputs = []
+                    # ensure we have at least one volume level
+                    if not export_volumes:
+                        export_volumes = [1.0]
+
+                    for index, vol in enumerate(export_volumes):
+                        filters.append(f"[0:a:{index}]volume={vol}[a{index}]")
+                        map_inputs.append(f"[a{index}]")
+                    amix = (
+                        "".join(map_inputs)
+                        + f"amix=inputs={len(export_volumes)}:duration=longest[mixed]"
+                    )
+                    audio_filter = "; ".join(filters + [amix])
+                    # end of the horror
+
+                    # Pass 1
+                    pass1 = [
+                        "ffmpeg",
+                        "-y",
+                        "-ss",
+                        str(export_start),
+                        "-t",
+                        str(duration),
+                        "-i",
+                        input_file,
+                        "-filter_complex",
+                        audio_filter,
+                        "-map",
+                        "0:v:0",
+                        "-map",
+                        "[mixed]",
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "medium",
+                        "-b:v",
+                        f"{export_video_kbps}k",
+                        "-c:a",
+                        "aac",
+                        "-b:a",
+                        f"{audio_kbps}k",
+                        "-pass",
+                        "1",
+                        "-f",
+                        "mp4",
+                        os.devnull,
+                    ]
+                    p1 = subprocess.Popen(
+                        pass1,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                    )
+                    out, two = p1.communicate()
+                    # log.debug(out)
 
                     # "-movflags", "+faststart",
-                print(f"{audio_filter}")
-                # Pass 2
-                pass2 = [
-                    "ffmpeg",
-                    "-y", "-ss", str(export_start), "-t", str(duration),
-                    "-i", input_file,
-                    "-filter_complex", audio_filter,
-                    "-map", "0:v:0", "-map", "[mixed]",
-                    "-c:v", "libx264", "-preset", "medium", "-b:v", f"{export_video_kbps}k",
-                    "-c:a", "aac", "-b:a", f"{audio_kbps}k",
-                    "-pass", "2", 
-                    "-f", "mp4",
-                    in_progress_file,
-                ]
-                print(pass2)
+                    log.debug(f"{audio_filter}")
+                    # Pass 2
+                    pass2 = [
+                        "ffmpeg",
+                        "-y",
+                        "-ss",
+                        str(export_start),
+                        "-t",
+                        str(duration),
+                        "-i",
+                        input_file,
+                        "-filter_complex",
+                        audio_filter,
+                        "-map",
+                        "0:v:0",
+                        "-map",
+                        "[mixed]",
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "medium",
+                        "-b:v",
+                        f"{export_video_kbps}k",
+                        "-c:a",
+                        "aac",
+                        "-b:a",
+                        f"{audio_kbps}k",
+                        "-pass",
+                        "2",
+                        "-f",
+                        "mp4",
+                        in_progress_file,
+                    ]
+                    log.debug(f"{pass2}")
                     # "-movflags", "+faststart",
-                p2 = subprocess.Popen(pass2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                out, two = p2.communicate()
-                # print(out)
-                os.rename(in_progress_file, exported_file)
+                    p2 = subprocess.Popen(
+                        pass2,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                    )
+                    out, two = p2.communicate()
+                    # log.debug(out)
+                    os.rename(in_progress_file, exported_file)
 
-                # store the exported filename in the DB
-                conn = sqlite3.connect(DB_PATH)
-                conn.execute("""
-                            UPDATE clips SET exported_filename=? WHERE uuid=?""", 
-                            (os.path.basename(exported_file), export_uuid))
-                conn.commit()
-                conn.close()
+                    # store the exported filename in the DB
+                    conn = get_db()
+                    conn.execute(
+                        """
+                                UPDATE clips SET exported_filename=? WHERE uuid=?""",
+                        (os.path.basename(exported_file), export_uuid),
+                    )
+                    conn.commit()
+                    conn.close()
 
+                    continue
 
-                jobsQueue.task_done()
-                continue
+                case 10:  # Metadata
+                    uuid = item.UUID
+                    conn = get_db()
+                    r = conn.execute(
+                        "SELECT filename FROM clips WHERE uuid=?", (uuid,)
+                    ).fetchone()
+                    conn.close()
+                    if not r:
+                        log.error("file not found")
+                        return
 
-            case 10: # Metadata
+                    filepath = os.path.join(CLIPS_ROOT, r[0])
 
-                uuid = item.UUID
-                conn = sqlite3.connect(DB_PATH)
-                r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (uuid,)).fetchone()
-                conn.close()
-                if not r:
-                    print("file not found")
-                    jobsQueue.task_done()
-                    return
-                
-                filepath = os.path.join(CLIPS_ROOT, r[0])
-                
-                creation_date = os.path.getmtime(filepath)
-                size_bytes = os.path.getsize(filepath)
-                try:
-                    audio_tracks = ffprobe_trackcount(filepath)
-                except Exception:
-                    audio_tracks = None
+                    creation_date = os.path.getmtime(filepath)
+                    size_bytes = os.path.getsize(filepath)
+                    try:
+                        audio_tracks = ffprobe_trackcount(filepath)
+                    except Exception:
+                        audio_tracks = None
 
-                duration = ffprobe_duration(filepath)
+                    duration = ffprobe_duration(filepath)
 
-                conn = sqlite3.connect(DB_PATH)
-                conn.execute("""
-                UPDATE clips SET
-                    creation_time=?,
-                    size_bytes=?,
-                    audio_tracks=?,
-                    duration=?
-                WHERE uuid=?
-                """, (creation_date, size_bytes, audio_tracks, duration, uuid))
-                conn.commit()
-                conn.close()
-                jobsQueue.task_done()
-                continue
+                    conn = get_db()
+                    conn.execute(
+                        """
+                    UPDATE clips SET
+                        creation_time=?,
+                        size_bytes=?,
+                        audio_tracks=?,
+                        duration=?
+                    WHERE uuid=?
+                    """,
+                        (creation_date, size_bytes, audio_tracks, duration, uuid),
+                    )
+                    conn.commit()
+                    conn.close()
+                    continue
 
-            # case 20: # Proxy TODO remake this entire case to remux into fragmented mp4 for native browser playback
+                    # case 20: # Proxy TODO remake this entire case to remux into fragmented mp4 for native browser playback
 
-                uuid = item.UUID
+                    uuid = item.UUID
 
-                conn = sqlite3.connect(DB_PATH)
-                r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (uuid,)).fetchone()
-                conn.close()
-                if not r:
-                    print("file not found")
-                    jobsQueue.task_done()
-                    return
+                    conn = get_db()
+                    r = conn.execute(
+                        "SELECT filename FROM clips WHERE uuid=?", (uuid,)
+                    ).fetchone()
+                    conn.close()
+                    if not r:
+                        log.error("file not found")
+                        return
 
-                filepath = os.path.join(CLIPS_ROOT, r[0])
+                    filepath = os.path.join(CLIPS_ROOT, r[0])
 
-                proxy_path = os.path.join(DATA_PROXIES, f"{uuid}.mp4")
-                cmd = (f"ffmpeg -y -i {shlex.quote(filepath)} -map 0:v:0 -map 0:a:0 "
+                    proxy_path = os.path.join(DATA_PROXIES, f"{uuid}.mp4")
+                    cmd = (
+                        f"ffmpeg -y -i {shlex.quote(filepath)} -map 0:v:0 -map 0:a:0 "
                         f"-c:v libx264 -preset veryfast -crf 23 -vf scale='min(1280\\,iw)':-2 "
-                        f"-c:a aac -b:a 128k -movflags +faststart {shlex.quote(proxy_path)}")
-                subprocess.call(cmd, shell=True)
-                jobsQueue.task_done()
-                continue
+                        f"-c:a aac -b:a 128k -movflags +faststart {shlex.quote(proxy_path)}"
+                    )
+                    subprocess.call(cmd, shell=True)
+                    continue
 
-            case 30: # Thumbnail
+                case 30:  # Thumbnail
+                    uuid = item.UUID
 
-                uuid = item.UUID
+                    conn = get_db()
+                    r = conn.execute(
+                        "SELECT filename, duration FROM clips WHERE uuid=?", (uuid,)
+                    ).fetchone()
+                    conn.close()
 
-                conn = sqlite3.connect(DB_PATH)
-                r = conn.execute("SELECT filename, duration FROM clips WHERE uuid=?", (uuid,)).fetchone()
-                conn.close()
+                    if not r:
+                        log.error("file not found")
+                        return
+                    filepath = os.path.join(CLIPS_ROOT, r[0])
+                    thumb_path = os.path.join(DATA_THUMBS, f"{uuid}.jpg")
 
-                if not r:
-                    print("file not found")
-                    jobsQueue.task_done()
-                    return
-                filepath = os.path.join(CLIPS_ROOT, r[0])
-                thumb_path = os.path.join(DATA_THUMBS, f"{uuid}.jpg")
+                    dur = (
+                        r[1] if r[1] is not None else 2.0
+                    )  ## ok that was faster and easier than expected
 
-                dur = r[1] if r[1] is not None else 2.0 ## ok that was faster and easier than expected
+                    t = max(0.0, dur / 2.0)
+                    os.makedirs(os.path.dirname(thumb_path), exist_ok=True)
+                    thumbnail_ffmpeg = f'ffmpeg -y -ss {t:.2f} -i {shlex.quote(filepath)} -update true -frames:v 1 -vf "scale=min(480\\,iw):-2" {shlex.quote(thumb_path)}'
 
-                t = max(0.0, dur / 2.0)
-                os.makedirs(os.path.dirname(thumb_path), exist_ok=True)
-                thumbnail_ffmpeg = f'ffmpeg -y -ss {t:.2f} -i {shlex.quote(filepath)} -update true -frames:v 1 -vf "scale=min(480\\,iw):-2" {shlex.quote(thumb_path)}'
+                    subprocess.check_call(thumbnail_ffmpeg, shell=True)
 
-                subprocess.check_call(thumbnail_ffmpeg, shell=True)
+                    continue
 
-                jobsQueue.task_done()
-                continue
-
-            case _:
-                print(f"Unknown priority {item.priority}")
-                Warning("Unknown priority in job queue")
-                jobsQueue.task_done()
-                continue
-        # except Exception as e:
-        #     print(f"Error in worker loop: {e}")
-        # finally:
-        #     jobsQueue.task_done()
-
-threading.Thread(target=worker_loop, name="worker", daemon=True).start()
+                case _:
+                    log.warning(f"Unknown priority in job queue {item.priority}")
+                    continue
+        except Exception as e:
+            log.error(f"Error in worker thread for job {item}: {e}")
+        finally:
+            jobsQueue.task_done()
 
 
+def start_worker_thread():  #!TODO fast and slow thread, one dedicated for exports - but also able to be cancelled (??)
+    thread = threading.Thread(target=worker_loop, name="worker", daemon=True)
+    thread.start()
+    return thread
+
+
+class ClipsDirHandler(FileSystemEventHandler):
+    def __init__(self):
+        super().__init__()
+        self.pending_timers = {}
+
+    def on_created(self, event: FileCreatedEvent):
+        if event.is_directory:
+            return
+        if (
+            str(event.src_path)
+            .lower()
+            .endswith((".mp4", ".mov", ".mkv", ".avi", ".wmv", ".flv"))
+        ):
+            # Cancel existing timer if any
+            if event.src_path in self.pending_timers:
+                self.pending_timers[event.src_path].cancel()
+            # Start new timer to debounce
+            self.pending_timers[event.src_path] = threading.Timer(
+                5.0, self.process_file, args=(event.src_path,)
+            )
+            self.pending_timers[event.src_path].start()
+
+    def process_file(self, path):
+        self.pending_timers.pop(path, None)
+        log.info(f"🌚 Watcher ingesting new clip at: {path}")
+        ingest_new_clip(path)
+
+
+def start_watchdog():
+    observer = Observer()
+    handler = ClipsDirHandler()
+    observer.schedule(handler, CLIPS_ROOT, recursive=False)
+    observer.start()
+    log.info("Watcher thread started")
+    return observer
+
+
+def start_watcher_thread():
+    observer = start_watchdog()
+
+    def watcher_loop():
+        observer.join()
+
+    thread = threading.Thread(target=watcher_loop, name="watchdog", daemon=True)
+    thread.start()
+
+    return
+
+
+def ingest_new_clip(file_path: str):
+    new_uuid = str(uuid.uuid4())
+    filename = os.path.basename(file_path)
+    conn = get_db()
+    conn.execute(
+        """
+    INSERT INTO clips (uuid, filename) VALUES (?, ?)
+    """,
+        (new_uuid, filename),
+    )
+    conn.commit()
+    conn.close()
+    jobsQueue.put(PriorityItem(10, new_uuid))  # Metadata
+    jobsQueue.put(PriorityItem(30, new_uuid))  # Thumbnail
+    log.info(f"✨ Discovered new clip: {filename} as {new_uuid}")
 
 
 # --- API ---
 app = FastAPI(title="Clipper")
 
+
 @app.get("/clips")
 def list_clips():
     rows = db_list_all_clips()
-    return [{
-        "uuid": r["uuid"],
-        "file": r["filename"],
-        "size_bytes": r["size_bytes"],
-        "edited_title": r["edited_title"],
-        "creation_time": r["creation_time"],
-        "audio_tracks": r["audio_tracks"]
-    } for r in rows]
+    return [
+        {
+            "uuid": r["uuid"],
+            "file": r["filename"],
+            "size_bytes": r["size_bytes"],
+            "edited_title": r["edited_title"],
+            "creation_time": r["creation_time"],
+            "audio_tracks": r["audio_tracks"],
+        }
+        for r in rows
+    ]
+
 
 @app.get("/clips/{UUID}")
 def get_clip(UUID: str):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    r = conn.execute("SELECT edited_volumes, edited_start, edited_stop, exported_values FROM clips WHERE uuid=?", (UUID,)).fetchone()
+    conn = get_db()
+    r = conn.execute(
+        "SELECT edited_volumes, edited_start, edited_stop, exported_values FROM clips WHERE uuid=?",
+        (UUID,),
+    ).fetchone()
     conn.close()
-    if not r: raise HTTPException(404, detail="clip not found")
+    if not r:
+        raise HTTPException(404, detail="clip not found")
     result = dict(r)
     # decode edited_volumes if it's a string
     if isinstance(result.get("edited_volumes"), str):
@@ -444,22 +615,31 @@ class EditValues(BaseModel):
     edited_audio_labels: Optional[List[str]] = None
     edited_title: Optional[str] = None
 
+
 @app.patch("/clips/{UUID}")
 def update_info(UUID: str, clip_data: EditValues):
-    allowed_fields = {"edited_volumes", "edited_start", "edited_stop", "edited_title", "edited_audio_labels"}
+    allowed_fields = {
+        "edited_volumes",
+        "edited_start",
+        "edited_stop",
+        "edited_title",
+        "edited_audio_labels",
+    }
     update_fields = {}
     for key, value in clip_data.model_dump().items():
         if key in allowed_fields and value is not None:
             update_fields[key] = value
 
-
     if not update_fields:
-        raise HTTPException(400, detail=f"currently allowed editable fields are: {', '.join(allowed_fields)}")
+        raise HTTPException(
+            400,
+            detail=f"currently allowed editable fields are: {', '.join(allowed_fields)}",
+        )
 
     set_columns = ", ".join(f"{key}=?" for key in update_fields.keys())
     values = list(update_fields.values()) + [UUID]
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db()
     cur = conn.cursor()
     cur.execute(f"UPDATE clips SET {set_columns} WHERE uuid=?", values)
     conn.commit()
@@ -467,13 +647,17 @@ def update_info(UUID: str, clip_data: EditValues):
     conn.close()
 
     if not rowcount:
-        raise HTTPException(404, detail="no changes made, does that UUID exist? or was the data identical?")
+        raise HTTPException(
+            404,
+            detail="no changes made, does that UUID exist? or was the data identical?",
+        )
 
     return {"status": "updated"}
 
+
 @app.delete("/clips/{UUID}")
 def delete_clip(UUID: str):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db()
     r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
     if not r:
         conn.close()
@@ -492,26 +676,29 @@ def delete_clip(UUID: str):
     if os.path.exists(thumb_path):
         os.remove(thumb_path)
 
-
     return {"status": "deleted"}
+
 
 @app.get("/clips/{UUID}/thumb")
 def clip_thumb(UUID: str):
-    # conn = sqlite3.connect(DB_PATH) #why was all of this here? to verify if the UUID existed?
+    # conn = get_db() #why was all of this here? to verify if the UUID existed?
     # r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
     # conn.close()
     # if not r: raise HTTPException(404)
     thumb_path = os.path.join(DATA_THUMBS, f"{UUID}.jpg")
-    
+
     if not os.path.exists(thumb_path):
         jobsQueue.put(PriorityItem(30, UUID))
-        raise HTTPException(status_code=404, detail="Thumbnail not found but one has been queued")
+        raise HTTPException(
+            status_code=404, detail="Thumbnail not found but one has been queued"
+        )
     return FileResponse(thumb_path, media_type="image/jpeg")
+
 
 @app.get("/clips/{UUID}/play")
 def play(UUID: str):
     # proxy_path = os.path.join(DATA_PROXIES, f"{UUID}.mp4")
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db()
     r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
     conn.close()
 
@@ -519,30 +706,42 @@ def play(UUID: str):
         raise HTTPException(404, detail="No response from DB, does that clip exist?")
     filepath = os.path.join(CLIPS_ROOT, r[0])
     if not os.path.exists(filepath):
-        raise HTTPException(404, detail="The item is tracked, but the file was not found on disk - has it been moved/renamed/deleted?")
-    
+        raise HTTPException(
+            404,
+            detail="The item is tracked, but the file was not found on disk - has it been moved/renamed/deleted?",
+        )
 
     return FileResponse(filepath)
+
 
 class QueueExportValues(BaseModel):
     start: float
     end: float
     volumes: List[float]
-    size_limit_mb: float = 50.0 # hardcoded to 50mb TODO 
+    size_limit_mb: float = 50.0  # hardcoded to 50mb TODO
+
 
 @app.post("/clips/{UUID}/export")
 def queue_export(UUID: str, body: QueueExportValues):
     """queue an export job and store the export parameters in the DB"""
+    if body.start >= body.end:
+        raise HTTPException(400, detail="start time must be less than end time")
+    if body.size_limit_mb <= 0:
+        raise HTTPException(400, detail="size limit must be greater than 0")
+
     exported_values = json.dumps(body.model_dump())
 
     # the body should contain the keys "start", "end", "volumes" (dict), "size_limit_mb"
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db()
     cur = conn.cursor()
-    cur.execute("""UPDATE clips SET
-        exported_values=? 
+    cur.execute(
+        """UPDATE clips SET
+        exported_values=?
     WHERE uuid=?
-    """, (exported_values, UUID))
+    """,
+        (exported_values, UUID),
+    )
     conn.commit()
     rowcount = cur.rowcount
     conn.close()
@@ -551,47 +750,65 @@ def queue_export(UUID: str, body: QueueExportValues):
         # no rows updated -> clip not found
         raise HTTPException(404, detail="clip not found")
 
-    jobsQueue.put(PriorityItem(
-        5, UUID, body.start, body.end,
-        body.volumes, body.size_limit_mb
-    ))
+    jobsQueue.put(
+        PriorityItem(5, UUID, body.start, body.end, body.volumes, body.size_limit_mb)
+    )
 
     return {"status": "queued"}
+
 
 @app.get("/clips/{UUID}/export")
 def serve_export_file(UUID: str):
 
-    conn = sqlite3.connect(DB_PATH)
-    r = conn.execute("SELECT exported_filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
+    conn = get_db()
+    r = conn.execute(
+        "SELECT exported_filename FROM clips WHERE uuid=?", (UUID,)
+    ).fetchone()
     conn.close()
 
     if not r or not r[0]:
-        raise HTTPException(404, detail="Prospective filename not found on database, has the export job been sent?")
+        raise HTTPException(
+            404,
+            detail="Prospective filename not found on database, has the export job been sent?",
+        )
     export_file = os.path.join(DATA_EXPORTS, r[0])
 
     if not os.path.exists(export_file):
-        raise HTTPException(404, detail="Exported file not found on disk, has the export job completed or was the export folder cleared?")
+        raise HTTPException(
+            404,
+            detail="Exported file not found on disk, has the export job completed or was the export folder cleared?",
+        )
     return FileResponse(export_file, filename=r[0])
+
 
 @app.head("/clips/{UUID}/export")
 def check_export_file(UUID: str):
 
-    conn = sqlite3.connect(DB_PATH)
-    r = conn.execute("SELECT exported_filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
+    conn = get_db()
+    r = conn.execute(
+        "SELECT exported_filename FROM clips WHERE uuid=?", (UUID,)
+    ).fetchone()
     conn.close()
 
     if not r or not r[0]:
-        raise HTTPException(404, detail="Prospective filename not found on database, has the export job been sent?")
+        raise HTTPException(
+            404,
+            detail="Prospective filename not found on database, has the export job been sent?",
+        )
     export_file = os.path.join(DATA_EXPORTS, r[0])
 
     if not os.path.exists(export_file):
-        raise HTTPException(404, detail="Exported file not found on disk, has the export job completed or was the export folder cleared?")
+        raise HTTPException(
+            404,
+            detail="Exported file not found on disk, has the export job completed or was the export folder cleared?",
+        )
     return Response(status_code=200)
 
 
 @app.get("/queue")
 def queueSize():
     return {"queueSize": jobsQueue.qsize()}
+
 
 @app.post("/exit")
 def queueSize():
@@ -600,7 +817,7 @@ def queueSize():
 
 
 def resource_path(relative_path: str) -> str:
-    """ Get absolute path to resource, works for dev and PyInstaller """
+    """Get absolute path to resource, works for dev and PyInstaller"""
     try:
         base_path = sys._MEIPASS  # pyright: ignore[reportAttributeAccessIssue] # Set by PyInstaller
     except Exception:
@@ -608,12 +825,19 @@ def resource_path(relative_path: str) -> str:
 
     return os.path.join(base_path, relative_path)
 
+
 WEB_ROOT = resource_path("")
+
 
 @app.get("/", response_class=HTMLResponse)
 def root():
     index = os.path.join(WEB_ROOT, "index.html")
-    return FileResponse(index) if os.path.exists(index) else HTMLResponse("Missing index.html")
+    return (
+        FileResponse(index)
+        if os.path.exists(index)
+        else HTMLResponse("Missing index.html")
+    )
+
 
 @app.get("/loading.jpg", response_class=HTMLResponse)
 def loading():
@@ -622,7 +846,8 @@ def loading():
         return FileResponse(loading_path, media_type="image/jpeg")
 
     raise HTTPException(404)
-    
+
+
 # @app.get("/selectize.min.js", response_class=HTMLResponse)
 # def selectizeJS():
 #     index = os.path.join(WEB_ROOT, "selectize.min.js")
@@ -633,19 +858,23 @@ def loading():
 #     index = os.path.join(WEB_ROOT, "selectize.bootstrap5.css")
 #     return FileResponse(index) if os.path.exists(index) else HTMLResponse("Missing selectize.bootstrap5.css")
 
+
 # --- Startup ---
-jobsQueue = queue.PriorityQueue()
-init_db()
-init_scan() # should i put that down there? VV
-
-
 if __name__ == "__main__":
+    init_db()
+    init_scan()
+
+    start_worker_thread()
+    start_watcher_thread()
+
     if len(sys.argv) > 1:
         for arg in sys.argv[1:]:
             if arg == "-nogui":
-                print('⚠️   -nogui received, skipping tray icon...')
+                log.warning("⚠️   -nogui received, skipping tray icon...")
                 uvicorn.run(app, host="0.0.0.0", port=8000)
     else:
-        threading.Thread(target=lambda: uvicorn.run(app, host="0.0.0.0", port=8000), daemon=True).start()
+        threading.Thread(
+            target=lambda: uvicorn.run(app, host="0.0.0.0", port=8000), daemon=True
+        ).start()
         webbrowser.open("http://localhost:8000")
         init_tray_icon()

@@ -4,11 +4,9 @@
 ### Zero accounts, Zero ads, Free, Forever[^1]
 
 #### Major features:
-- Multi audio channel support
+- Multi audio channel support (the main motivator for this project)
     - Edit volumes for each audio channel individually and combines them into one
 - Sharing under a specified size limit
-- Saving of trimmed settings
-- Saving of exported settings
 
 ### Getting Started
 lorem ipsum i forgot
@@ -38,5 +36,11 @@ im so great at this (/s)
 ### ✨ CONTRIBUTING ✨
 
 please.
+
+look i know I KNOW, its monolithic, its ugly, its not modularised, and its not pretty (debatable - i for one think its beautiful).
+
+BUT
+
+it works. AND, you found it, and were interested in it enough to read this section, so thats a win in my book.
 
 [^1]:  (as long as GitHub still exists)

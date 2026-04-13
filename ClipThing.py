@@ -98,6 +98,13 @@ def get_db():
     return conn
 
 
+# def get_db_clip(uuid, columns):
+#     conn = get_db()
+#     cur = conn.cursor()
+#     for col in columns:
+# idk something like, get the clip and return the requested columns, maybe also retiring or combining the get_db function
+
+
 def init_scan():
     """Scan CLIPS_ROOT for new files, add critical UUID and filepath to DB and queue jobs."""
     existing_files = set()

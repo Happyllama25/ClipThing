@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import queue
-import shlex
 import sqlite3
 import subprocess
 import sys
@@ -561,7 +560,21 @@ def worker_loop():
 
                     t = max(0.0, dur / 2.0)
                     os.makedirs(os.path.dirname(thumb_path), exist_ok=True)
-                    thumbnail_ffmpeg = f'ffmpeg -y -ss {t:.2f} -i {shlex.quote(filepath)} -update true -frames:v 1 -vf "scale=min(480\\,iw):-2" {shlex.quote(thumb_path)}'
+                    thumbnail_ffmpeg = [
+                        "ffmpeg",
+                        "-y",
+                        "-ss",
+                        f"{t:.2f}",
+                        "-i",
+                        filepath,
+                        "-update",
+                        "true",
+                        "-frames:v",
+                        "1",
+                        "-vf",
+                        "scale=min(480\\,iw):-2",
+                        thumb_path,
+                    ]
 
                     subprocess.check_call(thumbnail_ffmpeg, shell=True)
 

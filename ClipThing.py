@@ -138,7 +138,7 @@ def init_tray_icon():
     from PyQt5.QtWidgets import QAction, QApplication, QMenu, QSystemTrayIcon
 
     def on_tray_activated(reason):
-        if reason == QSystemTrayIcon.Trigger:  # Left-click on most platforms
+        if reason == QSystemTrayIcon.activated: #dont think this even works lol, it was annoying anyway
             webbrowser.open("http://localhost:8000")
 
     qt_app = QApplication(sys.argv)

@@ -11,6 +11,7 @@ import sys
 import threading
 import uuid
 import webbrowser
+
 # from asyncio.queues import Queue
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -55,7 +56,7 @@ jobsQueue = queue.PriorityQueue()
 @dataclass(order=True)
 class PriorityItem:
     priority: int
-    UUID: str = field(compare=False)
+    uuid: str = field(compare=False)
     start: Optional[float] = field(compare=False, default=None)
     end: Optional[float] = field(compare=False, default=None)
     # trim: Tuple[float, float] = field(compare=False)
@@ -108,7 +109,7 @@ def get_db():
 
 
 def init_scan():
-    """Scan CLIPS_ROOT for new files, add critical UUID and filepath to DB and queue jobs."""
+    """Scan CLIPS_ROOT for new files, add critical uuid and filepath to DB and queue jobs."""
     existing_files = set()
     conn = get_db()
     cur = conn.cursor()
@@ -138,7 +139,9 @@ def init_tray_icon():
     from PyQt5.QtWidgets import QAction, QApplication, QMenu, QSystemTrayIcon
 
     def on_tray_activated(reason):
-        if reason == QSystemTrayIcon.activated: #dont think this even works lol, it was annoying anyway
+        if (
+            reason == QSystemTrayIcon.activated
+        ):  # dont think this even works lol, it was annoying anyway
             webbrowser.open("http://localhost:8000")
 
     qt_app = QApplication(sys.argv)
@@ -275,7 +278,7 @@ def worker_loop():
 
                 case 5:  # Export
                     # spawn ffmpeg, needed vars are file (deduce from uuid), start, end, volumes, size limit
-                    export_uuid = item.UUID
+                    export_uuid = item.uuid
                     # use DB to locate source video
                     conn = get_db()
                     r = conn.execute(
@@ -430,7 +433,7 @@ def worker_loop():
                     continue
 
                 case 10:  # Metadata
-                    uuid = item.UUID
+                    uuid = item.uuid
                     conn = get_db()
                     r = conn.execute(
                         "SELECT filename FROM clips WHERE uuid=?", (uuid,)
@@ -468,7 +471,7 @@ def worker_loop():
                     continue
 
                 case 15:  # Rip audio
-                    uuid = item.UUID
+                    uuid = item.uuid
 
                     conn = get_db()
                     r = conn.execute(
@@ -515,7 +518,7 @@ def worker_loop():
 
                 # case 20: # Proxy TODO remake this entire case to remux into fragmented mp4 for better native browser playback if not already
 
-                # uuid = item.UUID
+                # uuid = item.uuid
 
                 # conn = get_db()
                 # r = conn.execute(
@@ -538,7 +541,7 @@ def worker_loop():
                 # continue
 
                 case 30:  # Thumbnail
-                    uuid = item.UUID
+                    uuid = item.uuid
 
                     conn = get_db()
                     r = conn.execute(
@@ -668,12 +671,12 @@ def list_clips():
     ]
 
 
-@app.get("/clips/{UUID}")
-def get_clip(UUID: str):
+@app.get("/clips/{uuid}")
+def get_clip(uuid: str):
     conn = get_db()
     r = conn.execute(
         "SELECT edited_volumes, edited_start, edited_stop, exported_values FROM clips WHERE uuid=?",
-        (UUID,),
+        (uuid,),
     ).fetchone()
     conn.close()
     if not r:
@@ -696,8 +699,8 @@ class EditValues(BaseModel):
     edited_title: Optional[str] = None
 
 
-@app.patch("/clips/{UUID}")
-def update_info(UUID: str, clip_data: EditValues):
+@app.patch("/clips/{uuid}")
+def update_info(uuid: str, clip_data: EditValues):
     allowed_fields = {
         "edited_volumes",
         "edited_start",
@@ -717,7 +720,7 @@ def update_info(UUID: str, clip_data: EditValues):
         )
 
     set_columns = ", ".join(f"{key}=?" for key in update_fields.keys())
-    values = list(update_fields.values()) + [UUID]
+    values = list(update_fields.values()) + [uuid]
 
     conn = get_db()
     cur = conn.cursor()
@@ -729,21 +732,21 @@ def update_info(UUID: str, clip_data: EditValues):
     if not rowcount:
         raise HTTPException(
             404,
-            detail="no changes made, does that UUID exist? or was the data identical?",
+            detail="no changes made, does that uuid exist? or was the data identical?",
         )
 
     return {"status": "updated"}
 
 
-@app.delete("/clips/{UUID}")
-def delete_clip(UUID: str):
+@app.delete("/clips/{uuid}")
+def delete_clip(uuid: str):
     conn = get_db()
-    r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
+    r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (uuid,)).fetchone()
     if not r:
         conn.close()
         raise HTTPException(404, detail="clip not found")
     filename = r[0]
-    conn.execute("DELETE FROM clips WHERE uuid=?", (UUID,))
+    conn.execute("DELETE FROM clips WHERE uuid=?", (uuid,))
     conn.commit()
     conn.close()
 
@@ -752,34 +755,34 @@ def delete_clip(UUID: str):
     if os.path.exists(file_path):
         os.remove(file_path)
 
-    thumb_path = os.path.join(DATA_THUMBS, f"{UUID}.jpg")
+    thumb_path = os.path.join(DATA_THUMBS, f"{uuid}.jpg")
     if os.path.exists(thumb_path):
         os.remove(thumb_path)
 
     return {"status": "deleted"}
 
 
-@app.get("/clips/{UUID}/thumb")
-def clip_thumb(UUID: str):
-    # conn = get_db() #why was all of this here? to verify if the UUID existed?
-    # r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
+@app.get("/clips/{uuid}/thumb")
+def clip_thumb(uuid: str):
+    # conn = get_db() #why was all of this here? to verify if the uuid existed?
+    # r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (uuid,)).fetchone()
     # conn.close()
     # if not r: raise HTTPException(404)
-    thumb_path = os.path.join(DATA_THUMBS, f"{UUID}.jpg")
+    thumb_path = os.path.join(DATA_THUMBS, f"{uuid}.jpg")
 
     if not os.path.exists(thumb_path):
-        jobsQueue.put(PriorityItem(30, UUID))
+        jobsQueue.put(PriorityItem(30, uuid))
         raise HTTPException(
             status_code=404, detail="Thumbnail not found but one has been queued"
         )
     return FileResponse(thumb_path, media_type="image/jpeg")
 
 
-@app.get("/clips/{UUID}/play")
-def play(UUID: str):
-    # proxy_path = os.path.join(DATA_PROXIES, f"{UUID}.mp4")
+@app.get("/clips/{uuid}/play")
+def play(uuid: str):
+    # proxy_path = os.path.join(DATA_PROXIES, f"{uuid}.mp4")
     conn = get_db()
-    r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (UUID,)).fetchone()
+    r = conn.execute("SELECT filename FROM clips WHERE uuid=?", (uuid,)).fetchone()
     conn.close()
 
     if not r:
@@ -794,11 +797,11 @@ def play(UUID: str):
     return FileResponse(filepath)
 
 
-@app.get("/clips/{UUID}/audio/{track_id}")
-def get_audio_track(UUID: str, track_id: int):
-    audio_path = os.path.join(DATA_AUDIO, UUID, f"{UUID}_{track_id:02d}.m4a")
+@app.get("/clips/{uuid}/audio/{track_id}")
+def get_audio_track(uuid: str, track_id: int):
+    audio_path = os.path.join(DATA_AUDIO, uuid, f"{uuid}_{track_id:02d}.m4a")
     if not os.path.exists(audio_path):
-        jobsQueue.put(PriorityItem(15, UUID))  # Rip audio
+        jobsQueue.put(PriorityItem(15, uuid))  # Rip audio
         raise HTTPException(
             202, detail="Audio tracks not found, ripping has been queued"
         )
@@ -812,8 +815,8 @@ class QueueExportValues(BaseModel):
     size_limit_mb: float = 50.0  # hardcoded to 50mb TODO
 
 
-@app.post("/clips/{UUID}/export")
-def queue_export(UUID: str, body: QueueExportValues):
+@app.post("/clips/{uuid}/export")
+def queue_export(uuid: str, body: QueueExportValues):
     """queue an export job and store the export parameters in the DB"""
     if body.start >= body.end:
         raise HTTPException(400, detail="start time must be less than end time")
@@ -831,7 +834,7 @@ def queue_export(UUID: str, body: QueueExportValues):
         exported_values=?
     WHERE uuid=?
     """,
-        (exported_values, UUID),
+        (exported_values, uuid),
     )
     conn.commit()
     rowcount = cur.rowcount
@@ -842,18 +845,18 @@ def queue_export(UUID: str, body: QueueExportValues):
         raise HTTPException(404, detail="clip not found")
 
     jobsQueue.put(
-        PriorityItem(5, UUID, body.start, body.end, body.volumes, body.size_limit_mb)
+        PriorityItem(5, uuid, body.start, body.end, body.volumes, body.size_limit_mb)
     )
 
     return {"status": "queued"}
 
 
-@app.get("/clips/{UUID}/export")
-def serve_export_file(UUID: str):
+@app.get("/clips/{uuid}/export")
+def serve_export_file(uuid: str):
 
     conn = get_db()
     r = conn.execute(
-        "SELECT exported_filename FROM clips WHERE uuid=?", (UUID,)
+        "SELECT exported_filename FROM clips WHERE uuid=?", (uuid,)
     ).fetchone()
     conn.close()
 
@@ -872,12 +875,12 @@ def serve_export_file(UUID: str):
     return FileResponse(export_file, filename=r[0])
 
 
-@app.head("/clips/{UUID}/export")
-def check_export_file(UUID: str):
+@app.head("/clips/{uuid}/export")
+def check_export_file(uuid: str):
 
     conn = get_db()
     r = conn.execute(
-        "SELECT exported_filename FROM clips WHERE uuid=?", (UUID,)
+        "SELECT exported_filename FROM clips WHERE uuid=?", (uuid,)
     ).fetchone()
     conn.close()
 

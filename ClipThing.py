@@ -11,6 +11,7 @@ import sys
 import threading
 import uuid
 import webbrowser
+# from asyncio.queues import Queue
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -48,6 +49,7 @@ log.info("Logging Started!")
 
 # --- Job definitions ---
 jobsQueue = queue.PriorityQueue()
+# notificationQueue = Queue()
 
 
 @dataclass(order=True)
@@ -189,6 +191,13 @@ def db_list_all_clips() -> List[dict]:
 
 
 # --- Helpers ---
+
+
+# async def notify(message: str, refresh: bool):
+#     """notify UI of a change, and if a refresh is required (like if a clip was added or title change)"""
+#     await notificationQueue.put({"message": message, "refresh": refresh})
+
+
 def ffprobe_duration(path: str) -> float:
     """ffprobe duration of a media file"""
     cmd = [
@@ -597,6 +606,7 @@ class ClipsDirHandler(FileSystemEventHandler):
         self.pending_timers.pop(path, None)
         log.info(f"🌚 Watcher ingesting new clip at: {path}")
         ingest_new_clip(path)
+        # notify("New Clip", 1)
 
 
 def start_watchdog():

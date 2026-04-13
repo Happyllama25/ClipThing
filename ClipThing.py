@@ -23,7 +23,9 @@ from watchdog.events import FileCreatedEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 HOME_DIR = os.path.expanduser("~")
-CLIPS_ROOT = os.environ.get("CLIPS", f"{HOME_DIR}/Videos/clips")
+CLIPS_ROOT = os.environ.get(
+    "CLIPS", f"{HOME_DIR}/Videos/clips"
+)  # on macos this works but it makes a new folder in the home dir bc mac calls it "Movies" cus they special
 
 DATA_ROOT = os.path.join(CLIPS_ROOT, "data")
 DATA_EXPORTS = os.path.join(CLIPS_ROOT, "exports")

@@ -184,8 +184,17 @@ def db_list_all_clips() -> List[dict]:
 # --- Helpers ---
 def ffprobe_duration(path: str) -> float:
     """ffprobe duration of a media file"""
-    cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {shlex.quote(path)}"
-    out = subprocess.check_output(cmd, shell=True, text=True).strip()
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        path,
+    ]
+    out = subprocess.check_output(cmd, text=True).strip()
     return float(out)
 
 

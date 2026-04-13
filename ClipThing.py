@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from sanitize_filename import sanitize
-from watchdog.events import FileCreatedEvent, FileSystemEventHandler
+from watchdog.events import FileModifiedEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 HOME_DIR = os.path.expanduser("~")
@@ -41,8 +41,7 @@ for d in (CLIPS_ROOT, DATA_THUMBS, DATA_EXPORTS):
 
 # --- Logging ---
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 log = logging.getLogger("ClipThing")
 log.info("Logging Started!")
@@ -202,7 +201,7 @@ def ffprobe_duration(path: str) -> float:
 def compute_bitrates(size_limit_mb, duration, audio_kbps) -> int:
     """calc (calc is short for calculator) a bitrate audio/video pair within a size limit (MB)
 
-    its the size limit in megabytes, converted into kilobits per second, without the inserted audio kilobits per second
+    its the size limit in megabytes, converted into kilobits per second, minus the inserted audio kilobits per second
     """
     size_kilobits = int(size_limit_mb * 8000)
     total_v_kbps = size_kilobits / max(0.1, duration)
@@ -231,6 +230,7 @@ def ffprobe_trackcount(file_path: str) -> int:
     )
 
     if result.returncode != 0:
+        log.error(f"ffprobe error for track count on {file_path}: {result.stderr}")
         raise RuntimeError(f"ffprobe failed: {result.stderr}")
 
     data = json.loads(result.stdout)
@@ -243,7 +243,7 @@ def worker_loop():
     log.info("Worker thread started")
     while True:
         log.info("Worker waiting for job...")
-        item = jobsQueue.get()
+        item = jobsQueue.get(block=True, timeout=None)
         log.info(f"Worker got job: {item} with priority {item.priority}")
         try:
             match item.priority:
@@ -422,7 +422,7 @@ def worker_loop():
                     conn.close()
                     if not r:
                         log.error("file not found")
-                        return
+                        continue
 
                     filepath = os.path.join(CLIPS_ROOT, r[0])
 
@@ -557,7 +557,7 @@ def worker_loop():
             jobsQueue.task_done()
 
 
-def start_worker_thread():  #!TODO fast and slow thread, one dedicated for exports - but also able to be cancelled (??)
+def start_worker_thread():  # TODO: fast and slow thread, one dedicated for exports - but also able to be cancelled (??)
     thread = threading.Thread(target=worker_loop, name="worker", daemon=True)
     thread.start()
     return thread
@@ -568,7 +568,8 @@ class ClipsDirHandler(FileSystemEventHandler):
         super().__init__()
         self.pending_timers = {}
 
-    def on_created(self, event: FileCreatedEvent):
+    def on_modification(self, event: FileModifiedEvent):
+        debounce_time = 5.0  # TODO configurable
         if event.is_directory:
             return
         if (
@@ -581,7 +582,7 @@ class ClipsDirHandler(FileSystemEventHandler):
                 self.pending_timers[event.src_path].cancel()
             # Start new timer to debounce
             self.pending_timers[event.src_path] = threading.Timer(
-                5.0, self.process_file, args=(event.src_path,)
+                debounce_time, self.process_file, args=(event.src_path,)
             )
             self.pending_timers[event.src_path].start()
 
@@ -884,7 +885,7 @@ def queueSize():
 
 
 @app.post("/exit")
-def queueSize():
+def exit():
     jobsQueue.put(PriorityItem(1, "EXIT-EXIT-EXIT-EXIT"))
     return {"queueSize": jobsQueue.qsize()}
 
@@ -919,17 +920,6 @@ def loading():
         return FileResponse(loading_path, media_type="image/jpeg")
 
     raise HTTPException(404)
-
-
-# @app.get("/selectize.min.js", response_class=HTMLResponse)
-# def selectizeJS():
-#     index = os.path.join(WEB_ROOT, "selectize.min.js")
-#     return FileResponse(index) if os.path.exists(index) else HTMLResponse("Missing selectize.min.js")
-
-# @app.get("/selectize.bootstrap5.css", response_class=HTMLResponse)
-# def selectizeCSS():
-#     index = os.path.join(WEB_ROOT, "selectize.bootstrap5.css")
-#     return FileResponse(index) if os.path.exists(index) else HTMLResponse("Missing selectize.bootstrap5.css")
 
 
 # --- Startup ---

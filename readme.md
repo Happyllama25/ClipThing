@@ -38,4 +38,4 @@ BUT
 
 it works. AND, you found it, and were interested in it enough to read this section, so thats a win in my book.
 
-[^1]:  (as long as GitHub still exists)
+[^1]:  (until the [Heat Death of the Universe](https://en.wikipedia.org/wiki/Heat_death_of_the_universe))

@@ -536,7 +536,7 @@ def worker_loop():
                 #     f"-c:v libx264 -preset veryfast -crf 23 -vf scale='min(1280\\,iw)':-2 "
                 #     f"-c:a aac -b:a 128k -movflags +faststart {shlex.quote(proxy_path)}"
                 # )
-                # subprocess.call(cmd, shell=True)
+                # subprocess.call(cmd)
                 # continue
 
                 case 30:  # Thumbnail
@@ -576,7 +576,7 @@ def worker_loop():
                         thumb_path,
                     ]
 
-                    subprocess.check_call(thumbnail_ffmpeg, shell=True)
+                    subprocess.check_call(thumbnail_ffmpeg)
 
                     continue
 

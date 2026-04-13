@@ -39,7 +39,10 @@ for d in (CLIPS_ROOT, DATA_THUMBS, DATA_EXPORTS):
     os.makedirs(d, exist_ok=True)
 
 # --- Logging ---
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
 log = logging.getLogger("ClipThing")
 log.info("Logging Started!")
 

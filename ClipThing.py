@@ -33,6 +33,7 @@ DATA_EXPORTS = os.path.join(CLIPS_ROOT, "exports")
 # should we make a logs folder to contain ffmpeg logs? maybe futureproofing for multiple workers simultaneosly
 DB_PATH = os.path.join(DATA_ROOT, "ClipThing.db")
 DATA_THUMBS = os.path.join(DATA_ROOT, "thumbnails")
+DATA_AUDIO = os.path.join(DATA_ROOT, "audio")
 # DATA_PROXIES = os.path.join(DATA_ROOT, "proxies") # remove?
 
 for d in (CLIPS_ROOT, DATA_THUMBS, DATA_EXPORTS):
@@ -450,29 +451,75 @@ def worker_loop():
                     conn.close()
                     continue
 
-                    # case 20: # Proxy TODO remake this entire case to remux into fragmented mp4 for native browser playback
-
+                case 15:  # Rip audio
                     uuid = item.UUID
 
                     conn = get_db()
                     r = conn.execute(
-                        "SELECT filename FROM clips WHERE uuid=?", (uuid,)
+                        "SELECT filename, audio_tracks FROM clips WHERE uuid=?", (uuid,)
                     ).fetchone()
                     conn.close()
-                    if not r:
+                    clip = dict(r)
+                    if not clip:
                         log.error("file not found")
-                        return
+                        continue
+                    clip_path = os.path.join(CLIPS_ROOT, clip["filename"])
 
-                    filepath = os.path.join(CLIPS_ROOT, r[0])
+                    ext = "m4a"  # TODO: configurable audio format
+                    for track in range(clip["audio_tracks"]):
+                        output_dir = os.path.join(DATA_AUDIO, uuid)
+                        os.makedirs(output_dir, exist_ok=True)
+                        output_file = os.path.join(
+                            output_dir, f"{uuid}_{track:02d}.{ext}"
+                        )
+                        cmd = [
+                            "ffmpeg",
+                            "-y",
+                            "-i",
+                            clip_path,
+                            "-map",
+                            f"0:a:{track}",
+                            "-c",
+                            "copy",
+                            output_file,
+                        ]
+                        result = subprocess.run(
+                            cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                        )
+                        if (
+                            result.returncode != 0
+                        ):  # TODO: handle better, i think this kills the entire thread?
+                            raise RuntimeError(
+                                f"Failed to rip audio track {track} for {clip_path}: {result.stderr}"
+                            )
+                        continue
 
-                    proxy_path = os.path.join(DATA_PROXIES, f"{uuid}.mp4")
-                    cmd = (
-                        f"ffmpeg -y -i {shlex.quote(filepath)} -map 0:v:0 -map 0:a:0 "
-                        f"-c:v libx264 -preset veryfast -crf 23 -vf scale='min(1280\\,iw)':-2 "
-                        f"-c:a aac -b:a 128k -movflags +faststart {shlex.quote(proxy_path)}"
-                    )
-                    subprocess.call(cmd, shell=True)
-                    continue
+                # case 20: # Proxy TODO remake this entire case to remux into fragmented mp4 for better native browser playback if not already
+
+                # uuid = item.UUID
+
+                # conn = get_db()
+                # r = conn.execute(
+                #     "SELECT filename FROM clips WHERE uuid=?", (uuid,)
+                # ).fetchone()
+                # conn.close()
+                # if not r:
+                #     log.error("file not found")
+                #     return
+
+                # filepath = os.path.join(CLIPS_ROOT, r[0])
+
+                # proxy_path = os.path.join(DATA_PROXIES, f"{uuid}.mp4")
+                # cmd = (
+                #     f"ffmpeg -y -i {shlex.quote(filepath)} -map 0:v:0 -map 0:a:0 "
+                #     f"-c:v libx264 -preset veryfast -crf 23 -vf scale='min(1280\\,iw)':-2 "
+                #     f"-c:a aac -b:a 128k -movflags +faststart {shlex.quote(proxy_path)}"
+                # )
+                # subprocess.call(cmd, shell=True)
+                # continue
 
                 case 30:  # Thumbnail
                     uuid = item.UUID
@@ -578,6 +625,7 @@ def ingest_new_clip(file_path: str):
     conn.commit()
     conn.close()
     jobsQueue.put(PriorityItem(10, new_uuid))  # Metadata
+    jobsQueue.put(PriorityItem(15, new_uuid))  # Rip audio
     jobsQueue.put(PriorityItem(30, new_uuid))  # Thumbnail
     log.info(f"✨ Discovered new clip: {filename} as {new_uuid}")
 
@@ -726,6 +774,17 @@ def play(UUID: str):
         )
 
     return FileResponse(filepath)
+
+
+@app.get("/clips/{UUID}/audio/{track_id}")
+def get_audio_track(UUID: str, track_id: int):
+    audio_path = os.path.join(DATA_AUDIO, UUID, f"{UUID}_{track_id:02d}.m4a")
+    if not os.path.exists(audio_path):
+        jobsQueue.put(PriorityItem(15, UUID))  # Rip audio
+        raise HTTPException(
+            202, detail="Audio tracks not found, ripping has been queued"
+        )
+    return FileResponse(audio_path, media_type="audio/m4a")
 
 
 class QueueExportValues(BaseModel):

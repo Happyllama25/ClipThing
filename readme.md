@@ -6,29 +6,24 @@
 #### Major features:
 - Multi audio channel support (the main motivator for this project)
     - Edit volumes for each audio channel individually and combines them into one
-- Sharing under a specified size limit
+- Exporting under a specified size limit
+- API based (you can make your own UI or interface!) (oh crap this means i need to write documentation)
 
 ### Getting Started
 lorem ipsum i forgot
 
-run `python clipthing.py` in a terminal, but run `pip install -r requirements.txt` first.
+`pip install -r requirements.txt` (guh)
+`python ClipThing.py` - you can run `-nogui` to skip the system tray icon
 
-<!-- To skip the tray icon, launch with the `-nogui` argument -->
+Runs on port `8000`, normally accessible on `http://localhost:8000`
 
-Runs on `http://localhost:8000`
+`CLIPS_ROOT` environment variable is the root directory for scanning and storing clips and data - defaults to `~HOME/Videos/clips`
+##### note that on MacOS this creates a new Videos directory in the users Home, because MacOS uses Movies instead of Videos
 
-`CLIPS` environment variable is the root directory for scanning and storing clips - defaults to `~HOME/Videos/clips`
-You can optionally host the program on a remote server/NAS so as to not use your hardware during a game session <-- self note: add this selling point somewhere where it makes sense
+Goal is to pack this into a neat lil' Docker container for running on a NAS, not quite there yet
 
 > [!WARNING]
-> This program is meant to be used in a local network - there is no remote authentication currently! Tailscale and alternative users should be fine if you know what you are doing
-
-### Known (probably) issues:
-
-- [Tracked Here](https://github.com/users/Happyllama25/projects/2/views/1?pane=issue&itemId=133277060&issue=Happyllama25%7CClipThing%7C13) | if you export the same clip twice (or more) with  different settings, the download link will only download whichever clip has finished processing most recently
-    - as in, the first export click will be downloaded, instead of the second export click, because the second click hasn't finished processing yet
-        - (unless the title changes, if the title changes, ur good [i think])
-- [Tracked Here](https://github.com/users/Happyllama25/projects/2/views/1?pane=issue&itemId=133228518) | if you delete the local file, the database wont know.
+> This program is meant to be used in a local network - there is no authentication! This should not be exposed to the internet (dont port forward). Tailscale and alternative users should be fine if you know what you are doing
 
 
 im so great at this (/s)
@@ -37,7 +32,7 @@ im so great at this (/s)
 
 please.
 
-look i know I KNOW, its monolithic, its ugly, its not modularised, and its not pretty (debatable - i for one think its beautiful).
+look i know I KNOW, its monolithic, its ugly, its not modularised, and its not pretty (thats debatable - i for one think its beautiful).
 
 BUT
 

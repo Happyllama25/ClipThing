@@ -28,6 +28,19 @@ Goal is to pack this into a neat lil' Docker container for running on a NAS, not
 
 im so great at this (/s)
 
+
+### How it actually works
+this is partially to teach others but also to remind me periodically what im actually trying to do
+
+1. A clip is detected
+2. Metadata is collected, a thumbnail is made,  audiotracks are ripped into seperate files (needed for browser)
+3. User edits a clip, trims, and adjusts the audio level of said clip, then clicks "export"
+4. All edit settings are saved, and the clip gets reencoded with the user selected settings
+
+- Couple drawbacks
+  - we're storing each clips' audio track basically twice (one in the original clip, and two in the ripped audio)
+  - i think theres another but i forgot
+
 ### ✨ CONTRIBUTING ✨
 
 please. i suck at html and javascript. its all API based tho, so that hopefully helps.

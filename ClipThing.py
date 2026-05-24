@@ -20,7 +20,13 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from sanitize_filename import sanitize
-from watchdog.events import FileModifiedEvent, FileSystemEventHandler
+from watchdog.events import (
+    DirCreatedEvent,
+    DirModifiedEvent,
+    FileCreatedEvent,
+    FileModifiedEvent,
+    FileSystemEventHandler,
+)
 from watchdog.observers import Observer
 
 HOME_DIR = os.path.expanduser("~")
@@ -74,7 +80,6 @@ def init_db():
         uuid TEXT PRIMARY KEY,
         process_status TEXT,
         user_status TEXT,
-        publicity BOOLEAN,
         filename TEXT,
         creation_time REAL,
         size_bytes INTEGER,
@@ -109,6 +114,10 @@ def get_db():
 
 def init_scan():
     """Scan CLIPS_ROOT for new files, add critical uuid and filepath to DB and queue jobs."""
+    # this could be heavy or take a while with a large library,
+    # other than moving clips into a new "unwatched" folder i dont-
+    # see another way to notice new files during app downtime
+
     existing_files = set()
     conn = get_db()
     cur = conn.cursor()
@@ -193,11 +202,6 @@ def db_list_all_clips() -> List[dict]:
 
 
 # --- Helpers ---
-
-
-# async def notify(message: str, refresh: bool):
-#     """notify UI of a change, and if a refresh is required (like if a clip was added or title change)"""
-#     await notificationQueue.put({"message": message, "refresh": refresh})
 
 
 def ffprobe_duration(path: str) -> float:
@@ -370,7 +374,8 @@ def worker_loop():
                         stderr=subprocess.STDOUT,
                         text=True,
                     )
-                    out, two = p1.communicate()
+                    # out, two =
+                    p1.communicate()
                     # log.debug(out)
 
                     # "-movflags", "+faststart",
@@ -415,7 +420,9 @@ def worker_loop():
                         stderr=subprocess.STDOUT,
                         text=True,
                     )
-                    out, two = p2.communicate()
+                    # out, two =
+                    p2.communicate()
+
                     # log.debug(out)
                     os.rename(in_progress_file, exported_file)
 
@@ -600,7 +607,19 @@ class ClipsDirHandler(FileSystemEventHandler):
         super().__init__()
         self.pending_timers = {}
 
-    def on_modification(self, event: FileModifiedEvent):
+    def on_modified(self, event: DirModifiedEvent | FileModifiedEvent):
+        self.debounce(event)
+
+    def on_created(self, event: DirCreatedEvent | FileCreatedEvent):
+        self.debounce(event)
+
+    def debounce(
+        self,
+        event: DirCreatedEvent
+        | DirModifiedEvent
+        | FileCreatedEvent
+        | FileModifiedEvent,
+    ):
         debounce_time = 5.0  # TODO configurable
         if event.is_directory:
             return
@@ -652,9 +671,9 @@ def ingest_new_clip(file_path: str):
     conn = get_db()
     conn.execute(
         """
-    INSERT INTO clips (uuid, filename) VALUES (?, ?)
+    INSERT INTO clips (uuid, filename, user_status, process_status) VALUES (?, ?, ?, ?)
     """,
-        (new_uuid, filename),
+        (new_uuid, filename, "not_viewed", "ingest"),
     )
     conn.commit()
     conn.close()

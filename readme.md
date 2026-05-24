@@ -30,7 +30,7 @@ im so great at this (/s)
 
 ### ✨ CONTRIBUTING ✨
 
-please.
+please. i suck at html and javascript. its all API based tho, so that hopefully helps.
 
 look i know I KNOW, its monolithic, its ugly, its not modularised, and its not pretty (thats debatable - i for one think its beautiful).
 

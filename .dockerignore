@@ -1,0 +1,12 @@
+.git
+.github
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.gitignore
+.dockerignore
+.DS_Store
+*.spec
+README.md
+todolist.md

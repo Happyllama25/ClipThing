@@ -1,0 +1,21 @@
+services:
+  clipthing:
+    build: .
+    image: clipthing:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - type: bind
+        source: /Users/kalmia/Videos/clipthing/clips
+        target: /app/clips
+        read_only: true
+      - type: bind
+        source: /Users/kalmia/Videos/clipthing/data
+        target: /app/data
+    # environment: Shouldn't need this bc its set during the container build
+    #   - CLIPS_ROOT=/data/clips
+    restart: unless-stopped
+    environment:
+      - DATA_ROOT=/app/data
+# volumes:
+#   clipthing_data:

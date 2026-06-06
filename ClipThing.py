@@ -29,29 +29,34 @@ from watchdog.events import (
 )
 from watchdog.observers import Observer
 
-HOME_DIR = os.path.expanduser("~")
-CLIPS_ROOT = os.environ.get(
-    "CLIPS_ROOT", f"{HOME_DIR}/Videos/clips"
-)  # on macos this works but it makes a new folder in the home dir bc mac calls it "Movies" cus they special
-
-DATA_ROOT = os.path.join(CLIPS_ROOT, "data")
-DATA_EXPORTS = os.path.join(CLIPS_ROOT, "exports")
-
-# should we make a logs folder to contain ffmpeg logs? maybe futureproofing for multiple workers simultaneosly
-DB_PATH = os.path.join(DATA_ROOT, "ClipThing.db")
-DATA_THUMBS = os.path.join(DATA_ROOT, "thumbnails")
-DATA_AUDIO = os.path.join(DATA_ROOT, "audio")
-# DATA_PROXIES = os.path.join(DATA_ROOT, "proxies") # remove?
-
-for d in (CLIPS_ROOT, DATA_THUMBS, DATA_EXPORTS):
-    os.makedirs(d, exist_ok=True)
-
 # --- Logging ---
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 log = logging.getLogger("ClipThing")
 log.info("Logging Started!")
+
+HOME_DIR = os.path.expanduser("~")
+
+CLIPS_ROOT = os.environ.get(
+    "CLIPS_ROOT", f"{HOME_DIR}/Videos/clips"
+)  # on macos this works but it makes a new folder in the home dir bc mac calls it "Movies" cus they special
+DATA_ROOT = os.environ.get("DATA_ROOT", f"{HOME_DIR}/Documents/clipthing")
+logging.info(DATA_ROOT)
+# i feel like theres a better way to do this, OS language might have different user directory names
+
+DATA_EXPORTS = os.path.join(DATA_ROOT, "exports")
+
+
+# should we make a logs folder to contain ffmpeg logs? maybe futureproofing for multiple workers simultaneosly
+DB_PATH = os.path.join(DATA_ROOT, "ClipThing.db")
+DATA_THUMBS = os.path.join(DATA_ROOT, "thumbnails")
+DATA_AUDIO = os.path.join(DATA_ROOT, "audio")
+# DATA_PROXIES = os.path.join(DATA, "proxies") # remove?
+log.info("TEST HALLO !!! ")
+for d in (CLIPS_ROOT, DATA_ROOT, DATA_THUMBS, DATA_EXPORTS):
+    log.info(os.makedirs(d, exist_ok=True))
+
 
 # --- Job definitions ---
 jobsQueue = queue.PriorityQueue()
@@ -75,6 +80,8 @@ def init_db():
     conn = get_db()
     conn.execute("PRAGMA journal_mode=WAL;")
     cur = conn.cursor()
+    # process_status TEXT,
+    # user_status TEXT,
     cur.execute("""
     CREATE TABLE IF NOT EXISTS clips (
         uuid TEXT PRIMARY KEY,
@@ -127,6 +134,7 @@ def init_scan():
     conn.close()
 
     for file in os.listdir(CLIPS_ROOT):
+        logging.info(f"Init scan found file: {file}")
         if file in existing_files:
             continue
         if not file.lower().endswith((".mp4", ".mov", ".mkv", ".avi", ".wmv", ".flv")):
@@ -293,7 +301,9 @@ def worker_loop():
                         raise FileNotFoundError("clip not found")
                     input_file = os.path.join(CLIPS_ROOT, r[0])
 
-                    ext = "mp4"  # configurable? should it be saved in the db or just when the job is created?
+                    ext = os.getenv(
+                        "EXPORT_EXT", "mp4"
+                    )  # configurable? should it be saved in the db or just when the job is created?
                     edited_title = r[1] if r[1] else os.path.splitext(r[0])[0]
                     # name will be: edited title, or filename without extension
                     exported_file = os.path.join(
@@ -490,7 +500,9 @@ def worker_loop():
                         continue
                     clip_path = os.path.join(CLIPS_ROOT, clip["filename"])
 
-                    ext = "m4a"  # TODO: configurable audio format
+                    ext = os.getenv(
+                        "AUDIO_EXT", "m4a"
+                    )  # TODO: configurable audio format
                     for track in range(clip["audio_tracks"]):
                         output_dir = os.path.join(DATA_AUDIO, uuid)
                         os.makedirs(output_dir, exist_ok=True)
@@ -671,10 +683,11 @@ def ingest_new_clip(file_path: str):
     conn = get_db()
     conn.execute(
         """
-    INSERT INTO clips (uuid, filename, user_status, process_status) VALUES (?, ?, ?, ?)
+    INSERT INTO clips (uuid, filename) VALUES (?, ?)
     """,
-        (new_uuid, filename, "not_viewed", "ingest"),
-    )
+        (new_uuid, filename),
+    )  # user_status, process_status
+    # "not_viewed", "ingest"
     conn.commit()
     conn.close()
     jobsQueue.put(PriorityItem(10, new_uuid))  # Metadata
